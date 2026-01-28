@@ -9,5 +9,10 @@
     "confidence_threshold": 0.25,
     "detection_interval": 5,
     "min_movement_pixels": 5.0
+  },
+  "speed": {
+    "max_speed_kmh": 5.00,
+    "meters_per_pixel": 0.01,
+    "smoothing_window": 3
   }
 }

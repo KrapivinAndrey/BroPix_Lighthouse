@@ -25,6 +25,152 @@ class CameraError(Exception):
     pass
 
 
+class SpeedTracker:
+    """
+    Tracks object speed based on position history and time.
+    
+    Calculates speed in km/h by tracking object center positions
+    across frames and converting pixel displacement to real-world distance.
+    """
+
+    def __init__(self, meters_per_pixel: float, smoothing_window: int = 3, min_time_delta: float = 0.1):
+        """
+        Initialize speed tracker.
+
+        Args:
+            meters_per_pixel: Conversion factor from pixels to meters
+            smoothing_window: Number of recent speed measurements to average
+            min_time_delta: Minimum time difference (seconds) to calculate speed
+        """
+        self.meters_per_pixel = meters_per_pixel
+        self.smoothing_window = smoothing_window
+        self.min_time_delta = min_time_delta
+        # Dictionary: track_id -> deque of (center_x, center_y, timestamp) tuples
+        self.position_history: dict[int, deque] = {}
+        # Dictionary: track_id -> deque of recent speed measurements (km/h)
+        self.speed_history: dict[int, deque] = {}
+        # Dictionary: track_id -> last calculated speed (km/h)
+        self.current_speeds: dict[int, float] = {}
+
+    def _calculate_center(self, bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
+        """
+        Calculate center point of bounding box.
+
+        Args:
+            bbox: Bounding box as (x1, y1, x2, y2)
+
+        Returns:
+            Tuple of (center_x, center_y)
+        """
+        x1, y1, x2, y2 = bbox
+        center_x = (x1 + x2) / 2.0
+        center_y = (y1 + y2) / 2.0
+        return center_x, center_y
+
+    def _calculate_distance(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
+        """
+        Calculate Euclidean distance between two positions in pixels.
+
+        Args:
+            pos1: First position (x, y)
+            pos2: Second position (x, y)
+
+        Returns:
+            Distance in pixels
+        """
+        dx = pos2[0] - pos1[0]
+        dy = pos2[1] - pos1[1]
+        return np.sqrt(dx * dx + dy * dy)
+
+    def update(self, track_id: int, bbox: Tuple[int, int, int, int], timestamp: float) -> Optional[float]:
+        """
+        Update position history and calculate speed for an object.
+
+        Args:
+            track_id: Tracking ID of the object
+            bbox: Current bounding box as (x1, y1, x2, y2)
+            timestamp: Current timestamp in seconds
+
+        Returns:
+            Current speed in km/h, or None if speed cannot be calculated yet
+        """
+        current_center = self._calculate_center(bbox)
+
+        # Initialize history if needed
+        if track_id not in self.position_history:
+            self.position_history[track_id] = deque(maxlen=self.smoothing_window + 1)
+            self.speed_history[track_id] = deque(maxlen=self.smoothing_window)
+            self.current_speeds[track_id] = 0.0
+
+        # Add current position and timestamp
+        self.position_history[track_id].append((current_center[0], current_center[1], timestamp))
+
+        history = self.position_history[track_id]
+        
+        # Need at least 2 points to calculate speed
+        if len(history) < 2:
+            return None
+
+        # Calculate speed using oldest and newest points in history
+        oldest = history[0]
+        newest = history[-1]
+        
+        time_delta = newest[2] - oldest[2]
+        
+        # Skip if time delta is too small (unreliable measurement)
+        if time_delta < self.min_time_delta:
+            return self.current_speeds.get(track_id)
+
+        # Calculate distance in pixels
+        distance_px = self._calculate_distance((oldest[0], oldest[1]), (newest[0], newest[1]))
+        
+        # Convert to meters
+        distance_m = distance_px * self.meters_per_pixel
+        
+        # Calculate speed in m/s
+        speed_mps = distance_m / time_delta if time_delta > 0 else 0.0
+        
+        # Convert to km/h
+        speed_kmh = speed_mps * 3.6
+        
+        # Store in speed history for smoothing
+        self.speed_history[track_id].append(speed_kmh)
+        
+        # Calculate smoothed speed (average of recent measurements)
+        if len(self.speed_history[track_id]) > 0:
+            smoothed_speed = sum(self.speed_history[track_id]) / len(self.speed_history[track_id])
+            self.current_speeds[track_id] = smoothed_speed
+            return smoothed_speed
+        
+        return None
+
+    def get_speed(self, track_id: int) -> Optional[float]:
+        """
+        Get current speed for an object.
+
+        Args:
+            track_id: Tracking ID of the object
+
+        Returns:
+            Current speed in km/h, or None if not available
+        """
+        return self.current_speeds.get(track_id)
+
+    def remove_track(self, track_id: int) -> None:
+        """
+        Remove tracking history for an object that is no longer detected.
+
+        Args:
+            track_id: Tracking ID to remove
+        """
+        if track_id in self.position_history:
+            del self.position_history[track_id]
+        if track_id in self.speed_history:
+            del self.speed_history[track_id]
+        if track_id in self.current_speeds:
+            del self.current_speeds[track_id]
+
+
 class MovementTracker:
     """
     Tracks object movement across frames to filter out static objects.
@@ -315,6 +461,34 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
     # Initialize movement tracker
     movement_tracker = MovementTracker(min_movement_pixels=min_movement_pixels)
 
+    # Initialize speed tracker
+    speed_tracker = None
+    max_speed_kmh = None
+    try:
+        speed_config = config.get("speed", {}) if config else {}
+        max_speed_kmh = speed_config.get("max_speed_kmh")
+        meters_per_pixel = speed_config.get("meters_per_pixel")
+        smoothing_window = speed_config.get("smoothing_window", 3)
+
+        # Validate speed configuration
+        if max_speed_kmh is not None and max_speed_kmh <= 0:
+            logger.warning(f"Invalid max_speed_kmh: {max_speed_kmh}. Speed tracking disabled.")
+            max_speed_kmh = None
+        if meters_per_pixel is not None and meters_per_pixel <= 0:
+            logger.warning(f"Invalid meters_per_pixel: {meters_per_pixel}. Speed tracking disabled.")
+            meters_per_pixel = None
+
+        if max_speed_kmh is not None and meters_per_pixel is not None:
+            speed_tracker = SpeedTracker(
+                meters_per_pixel=meters_per_pixel,
+                smoothing_window=smoothing_window
+            )
+            logger.info(f"Speed tracking enabled: max_speed={max_speed_kmh} km/h, meters_per_pixel={meters_per_pixel}, smoothing_window={smoothing_window}")
+        else:
+            logger.warning("Speed tracking disabled: missing or invalid speed configuration")
+    except Exception as e:
+        logger.warning(f"Failed to initialize speed tracker: {str(e)}. Speed tracking disabled.")
+
     try:
         camera.connect()
 
@@ -330,6 +504,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         frame_count = 0
         tracked_objects: dict = {}  # track_id -> Detection
         new_detections: list = []  # New objects detected in current frame
+        object_speeds: dict[int, float] = {}  # track_id -> speed_kmh
 
         logger.info("Starting video stream. Press ESC or Q to exit.")
 
@@ -341,6 +516,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                 break
 
             frame_count += 1
+            current_timestamp = time.time()
 
             # Detect objects if detector is available
             detections = []
@@ -408,8 +584,29 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         detections = moving_detections
                         new_detections = []  # No new objects when just tracking
                     
+                    # Calculate speeds for detected objects
+                    object_speeds = {}
+                    if speed_tracker is not None:
+                        for det in detections:
+                            if det.track_id is not None:
+                                speed_kmh = speed_tracker.update(det.track_id, det.bbox, current_timestamp)
+                                if speed_kmh is not None:
+                                    object_speeds[det.track_id] = speed_kmh
+                        
+                        # Clean up speed tracker for objects no longer detected
+                        current_track_ids = {det.track_id for det in detections if det.track_id is not None}
+                        for tid in list(speed_tracker.position_history.keys()):
+                            if tid not in current_track_ids:
+                                speed_tracker.remove_track(tid)
+                    
                     # Draw bounding boxes on frame
-                    frame = detector.draw_detections(frame, detections, new_objects=new_detections)
+                    frame = detector.draw_detections(
+                        frame, 
+                        detections, 
+                        new_objects=new_detections,
+                        object_speeds=object_speeds if speed_tracker is not None else None,
+                        max_speed_kmh=max_speed_kmh
+                    )
                 except Exception as e:
                     logger.warning(f"Error during object detection: {str(e)}")
                     new_detections = []
@@ -422,16 +619,29 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                 fps_frame_count = 0
                 fps_start_time = time.time()
 
+            # Count overspeed objects
+            overspeed_count = 0
+            if speed_tracker is not None and max_speed_kmh is not None:
+                overspeed_count = sum(1 for tid, speed in object_speeds.items() if speed > max_speed_kmh)
+
             # Draw FPS and status on frame
             fps_text = f"FPS: {fps_current:.1f}"
             status_text = f"Camera: {camera.index} | Resolution: {frame.shape[1]}x{frame.shape[0]}"
             objects_text = f"Moving objects: {len(detections)} (Tracked: {len(tracked_objects)}, New: {len(new_detections)})"
             detection_mode_text = f"Mode: {'Detection' if frame_count % detection_interval == 0 else 'Tracking'}"
+            
+            # Add speed status if speed tracking is enabled
+            speed_status_text = ""
+            if speed_tracker is not None and max_speed_kmh is not None:
+                speed_status_text = f"Max speed: {max_speed_kmh:.1f} km/h | Overspeed: {overspeed_count}"
 
             cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.putText(frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.putText(frame, objects_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             cv2.putText(frame, detection_mode_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 165, 0), 2)
+            
+            if speed_status_text:
+                cv2.putText(frame, speed_status_text, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255) if overspeed_count > 0 else (255, 255, 255), 2)
 
             cv2.imshow(window_name, frame)
 

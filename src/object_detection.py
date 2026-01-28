@@ -237,7 +237,7 @@ class ObjectDetector:
             logger.error(f"Error during new object detection: {str(e)}", exc_info=True)
             return []
 
-    def draw_detections(self, frame: np.ndarray, detections: List[Detection], new_objects: Optional[List[Detection]] = None) -> np.ndarray:
+    def draw_detections(self, frame: np.ndarray, detections: List[Detection], new_objects: Optional[List[Detection]] = None, object_speeds: Optional[dict[int, float]] = None, max_speed_kmh: Optional[float] = None) -> np.ndarray:
         """
         Draw bounding boxes and labels on frame for debugging.
 
@@ -245,6 +245,8 @@ class ObjectDetector:
             frame: Input frame to draw on
             detections: List of Detection objects to draw
             new_objects: Optional list of new Detection objects (will be drawn with different color)
+            object_speeds: Optional dictionary mapping track_id to speed in km/h
+            max_speed_kmh: Optional maximum speed threshold in km/h for red frame indication
 
         Returns:
             Frame with drawn bounding boxes and labels
@@ -259,9 +261,19 @@ class ObjectDetector:
         for detection in detections:
             x1, y1, x2, y2 = detection.bbox
 
-            # Determine color based on whether this is a new object
+            # Get speed for this object if available
+            speed_kmh = None
+            if object_speeds is not None and detection.track_id is not None:
+                speed_kmh = object_speeds.get(detection.track_id)
+
+            # Determine color based on speed threshold and whether this is a new object
             is_new = detection.track_id is not None and detection.track_id in new_track_ids
-            if is_new:
+            is_overspeed = False
+            
+            if speed_kmh is not None and max_speed_kmh is not None and speed_kmh > max_speed_kmh:
+                color = (0, 0, 255)  # Red for overspeed
+                is_overspeed = True
+            elif is_new:
                 color = (0, 255, 255)  # Yellow/Cyan for new objects
             else:
                 color = (0, 255, 0)  # Green for tracked objects
@@ -272,7 +284,13 @@ class ObjectDetector:
             # Prepare label text
             track_info = f" ID:{detection.track_id}" if detection.track_id is not None else ""
             new_marker = " [NEW]" if is_new else ""
-            label = f"{detection.class_name} {detection.confidence:.2f}{track_info}{new_marker}"
+            
+            # Add speed information if available
+            speed_text = ""
+            if speed_kmh is not None:
+                speed_text = f" {speed_kmh:.1f} км/ч"
+            
+            label = f"{detection.class_name} {detection.confidence:.2f}{track_info}{speed_text}{new_marker}"
 
             # Calculate text size for background
             (text_width, text_height), baseline = cv2.getTextSize(
