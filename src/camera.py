@@ -8,6 +8,7 @@ capture frames, and display video streams for debugging purposes.
 import json
 import logging
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -22,6 +23,107 @@ class CameraError(Exception):
     """Exception raised for camera-related errors."""
 
     pass
+
+
+class MovementTracker:
+    """
+    Tracks object movement across frames to filter out static objects.
+    
+    Maintains a history of object positions and calculates movement
+    based on displacement between frames.
+    """
+
+    def __init__(self, min_movement_pixels: float = 5.0, history_size: int = 3):
+        """
+        Initialize movement tracker.
+
+        Args:
+            min_movement_pixels: Minimum pixel displacement to consider object as moving
+            history_size: Number of previous positions to keep for each object
+        """
+        self.min_movement_pixels = min_movement_pixels
+        self.history_size = history_size
+        # Dictionary: track_id -> deque of (center_x, center_y) positions
+        self.position_history: dict[int, deque] = {}
+
+    def _calculate_center(self, bbox: Tuple[int, int, int, int]) -> Tuple[float, float]:
+        """
+        Calculate center point of bounding box.
+
+        Args:
+            bbox: Bounding box as (x1, y1, x2, y2)
+
+        Returns:
+            Tuple of (center_x, center_y)
+        """
+        x1, y1, x2, y2 = bbox
+        center_x = (x1 + x2) / 2.0
+        center_y = (y1 + y2) / 2.0
+        return center_x, center_y
+
+    def _calculate_displacement(self, pos1: Tuple[float, float], pos2: Tuple[float, float]) -> float:
+        """
+        Calculate Euclidean distance between two positions.
+
+        Args:
+            pos1: First position (x, y)
+            pos2: Second position (x, y)
+
+        Returns:
+            Distance in pixels
+        """
+        dx = pos2[0] - pos1[0]
+        dy = pos2[1] - pos1[1]
+        return np.sqrt(dx * dx + dy * dy)
+
+    def is_moving(self, track_id: Optional[int], bbox: Tuple[int, int, int, int]) -> bool:
+        """
+        Check if object is moving based on position history.
+
+        Args:
+            track_id: Tracking ID of the object (None if not tracked)
+            bbox: Current bounding box as (x1, y1, x2, y2)
+
+        Returns:
+            True if object is moving, False if static
+        """
+        if track_id is None:
+            # New objects without track_id are considered potentially moving
+            return True
+
+        current_center = self._calculate_center(bbox)
+
+        if track_id not in self.position_history:
+            # First time seeing this object, initialize history
+            self.position_history[track_id] = deque(maxlen=self.history_size)
+            self.position_history[track_id].append(current_center)
+            # Consider new objects as potentially moving
+            return True
+
+        # Get previous position
+        history = self.position_history[track_id]
+        if len(history) == 0:
+            history.append(current_center)
+            return True
+
+        previous_center = history[-1]
+        displacement = self._calculate_displacement(previous_center, current_center)
+
+        # Update history
+        history.append(current_center)
+
+        # Object is moving if displacement exceeds threshold
+        return displacement >= self.min_movement_pixels
+
+    def remove_track(self, track_id: int) -> None:
+        """
+        Remove tracking history for an object that is no longer detected.
+
+        Args:
+            track_id: Tracking ID to remove
+        """
+        if track_id in self.position_history:
+            del self.position_history[track_id]
 
 
 class Camera:
@@ -203,6 +305,16 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
     except Exception as e:
         logger.warning(f"Failed to initialize object detector: {str(e)}. Continuing without detection.")
 
+    # Get detection interval from config (default: 5 frames)
+    detection_config = config.get("object_detection", {}) if config else {}
+    detection_interval = detection_config.get("detection_interval", 5)
+    min_movement_pixels = detection_config.get("min_movement_pixels", 5.0)
+    logger.info(f"Detection interval set to {detection_interval} frames")
+    logger.info(f"Minimum movement threshold: {min_movement_pixels} pixels")
+
+    # Initialize movement tracker
+    movement_tracker = MovementTracker(min_movement_pixels=min_movement_pixels)
+
     try:
         camera.connect()
 
@@ -214,6 +326,11 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         fps_frame_count = 0
         fps_current = 0.0
 
+        # Object tracking state
+        frame_count = 0
+        tracked_objects: dict = {}  # track_id -> Detection
+        new_detections: list = []  # New objects detected in current frame
+
         logger.info("Starting video stream. Press ESC or Q to exit.")
 
         while True:
@@ -223,15 +340,79 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                 logger.warning("Failed to read frame from camera")
                 break
 
+            frame_count += 1
+
             # Detect objects if detector is available
             detections = []
             if detector is not None:
                 try:
-                    detections = detector.detect(frame)
+                    if frame_count % detection_interval == 0:
+                        # Full detection for new objects
+                        all_detections = detector.track(frame)
+                        
+                        # Save previous track IDs before updating
+                        previous_track_ids = set(tracked_objects.keys())
+                        
+                        # Filter out static objects and update tracked objects dictionary
+                        current_track_ids = set()
+                        moving_detections = []
+                        for det in all_detections:
+                            if det.track_id is not None:
+                                # Check if object is moving
+                                if movement_tracker.is_moving(det.track_id, det.bbox):
+                                    moving_detections.append(det)
+                                    tracked_objects[det.track_id] = det
+                                    current_track_ids.add(det.track_id)
+                                else:
+                                    # Static object - remove from tracking
+                                    movement_tracker.remove_track(det.track_id)
+                        
+                        # Find new objects (those not in previous tracked_objects)
+                        new_detections = [det for det in moving_detections if det.track_id is not None and det.track_id not in previous_track_ids]
+                        
+                        # Remove objects that are no longer detected or are static
+                        tracked_objects = {tid: tracked_objects[tid] for tid in current_track_ids if tid in tracked_objects}
+                        
+                        # Clean up movement tracker for objects no longer detected
+                        for tid in list(movement_tracker.position_history.keys()):
+                            if tid not in current_track_ids:
+                                movement_tracker.remove_track(tid)
+                        
+                        detections = moving_detections
+                        logger.debug(f"Full detection: {len(all_detections)} total, {len(moving_detections)} moving, {len(new_detections)} new")
+                    else:
+                        # Track existing objects
+                        tracked_detections = detector.track(frame)
+                        
+                        # Filter out static objects
+                        moving_detections = []
+                        for det in tracked_detections:
+                            if det.track_id is not None:
+                                # Check if object is moving
+                                if movement_tracker.is_moving(det.track_id, det.bbox):
+                                    moving_detections.append(det)
+                                    tracked_objects[det.track_id] = det
+                                else:
+                                    # Static object - remove from tracking
+                                    movement_tracker.remove_track(det.track_id)
+                        
+                        # Update tracked objects and remove static ones
+                        current_track_ids = {det.track_id for det in moving_detections if det.track_id is not None}
+                        tracked_objects = {tid: tracked_objects[tid] for tid in current_track_ids if tid in tracked_objects}
+                        
+                        # Clean up movement tracker for objects no longer detected
+                        for tid in list(movement_tracker.position_history.keys()):
+                            if tid not in current_track_ids:
+                                movement_tracker.remove_track(tid)
+                        
+                        detections = moving_detections
+                        new_detections = []  # No new objects when just tracking
+                    
                     # Draw bounding boxes on frame
-                    frame = detector.draw_detections(frame, detections)
+                    frame = detector.draw_detections(frame, detections, new_objects=new_detections)
                 except Exception as e:
                     logger.warning(f"Error during object detection: {str(e)}")
+                    new_detections = []
 
             # Calculate FPS
             fps_frame_count += 1
@@ -244,11 +425,13 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             # Draw FPS and status on frame
             fps_text = f"FPS: {fps_current:.1f}"
             status_text = f"Camera: {camera.index} | Resolution: {frame.shape[1]}x{frame.shape[0]}"
-            objects_text = f"Objects detected: {len(detections)}"
+            objects_text = f"Moving objects: {len(detections)} (Tracked: {len(tracked_objects)}, New: {len(new_detections)})"
+            detection_mode_text = f"Mode: {'Detection' if frame_count % detection_interval == 0 else 'Tracking'}"
 
             cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.putText(frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.putText(frame, objects_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            cv2.putText(frame, detection_mode_text, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 165, 0), 2)
 
             cv2.imshow(window_name, frame)
 

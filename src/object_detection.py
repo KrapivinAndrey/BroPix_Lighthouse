@@ -34,9 +34,10 @@ class Detection:
         confidence: Confidence score (0.0 to 1.0)
         class_id: Class ID of detected object
         class_name: Name of detected class
+        track_id: Optional tracking ID for object tracking across frames
     """
 
-    def __init__(self, bbox: Tuple[int, int, int, int], confidence: float, class_id: int, class_name: str):
+    def __init__(self, bbox: Tuple[int, int, int, int], confidence: float, class_id: int, class_name: str, track_id: Optional[int] = None):
         """
         Initialize detection.
 
@@ -45,15 +46,18 @@ class Detection:
             confidence: Confidence score (0.0 to 1.0)
             class_id: Class ID
             class_name: Class name
+            track_id: Optional tracking ID for object tracking
         """
         self.bbox = bbox
         self.confidence = confidence
         self.class_id = class_id
         self.class_name = class_name
+        self.track_id = track_id
 
     def __repr__(self) -> str:
         """String representation of detection."""
-        return f"Detection({self.class_name}, conf={self.confidence:.2f}, bbox={self.bbox})"
+        track_info = f", track_id={self.track_id}" if self.track_id is not None else ""
+        return f"Detection({self.class_name}, conf={self.confidence:.2f}, bbox={self.bbox}{track_info})"
 
 
 class ObjectDetector:
@@ -132,29 +136,143 @@ class ObjectDetector:
             logger.error(f"Error during object detection: {str(e)}", exc_info=True)
             return []
 
-    def draw_detections(self, frame: np.ndarray, detections: List[Detection]) -> np.ndarray:
+    def track(self, frame: np.ndarray) -> List[Detection]:
+        """
+        Track objects in a video frame using YOLO tracking.
+
+        This method uses YOLO's built-in tracking to follow objects across frames.
+        It is more efficient than full detection as it tracks already detected objects.
+
+        Args:
+            frame: Input frame as numpy array (BGR format)
+
+        Returns:
+            List of Detection objects with bounding boxes, class information, and track_id
+        """
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        try:
+            # Run tracking inference
+            results = self.model.track(frame, conf=self.confidence_threshold, verbose=False, persist=True)
+
+            detections = []
+            if results and len(results) > 0:
+                result = results[0]
+
+                # Extract tracked detections
+                boxes = result.boxes
+                if boxes is not None and len(boxes) > 0:
+                    for box in boxes:
+                        # Get bounding box coordinates (x1, y1, x2, y2)
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+
+                        # Get confidence and class
+                        confidence = float(box.conf[0].cpu().numpy())
+                        class_id = int(box.cls[0].cpu().numpy())
+                        class_name = self.model.names[class_id]
+
+                        # Get track_id if available
+                        track_id = None
+                        if box.id is not None and len(box.id) > 0:
+                            track_id = int(box.id[0].cpu().numpy())
+
+                        detections.append(Detection((x1, y1, x2, y2), confidence, class_id, class_name, track_id))
+
+            return detections
+
+        except Exception as e:
+            logger.error(f"Error during object tracking: {str(e)}", exc_info=True)
+            return []
+
+    def detect_new_objects(self, frame: np.ndarray, existing_track_ids: set) -> List[Detection]:
+        """
+        Detect only new objects that are not already being tracked.
+
+        This method performs full detection and filters out objects that are already
+        being tracked based on their track_id.
+
+        Args:
+            frame: Input frame as numpy array (BGR format)
+            existing_track_ids: Set of track IDs that are already being tracked
+
+        Returns:
+            List of Detection objects representing only new objects (not in existing_track_ids)
+        """
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+
+        try:
+            # Run tracking inference to get all objects with track_ids
+            results = self.model.track(frame, conf=self.confidence_threshold, verbose=False, persist=True)
+
+            new_detections = []
+            if results and len(results) > 0:
+                result = results[0]
+
+                # Extract detections
+                boxes = result.boxes
+                if boxes is not None and len(boxes) > 0:
+                    for box in boxes:
+                        # Get track_id
+                        track_id = None
+                        if box.id is not None and len(box.id) > 0:
+                            track_id = int(box.id[0].cpu().numpy())
+
+                        # Only include if this is a new object (not in existing_track_ids)
+                        if track_id is None or track_id not in existing_track_ids:
+                            # Get bounding box coordinates (x1, y1, x2, y2)
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+
+                            # Get confidence and class
+                            confidence = float(box.conf[0].cpu().numpy())
+                            class_id = int(box.cls[0].cpu().numpy())
+                            class_name = self.model.names[class_id]
+
+                            new_detections.append(Detection((x1, y1, x2, y2), confidence, class_id, class_name, track_id))
+
+            return new_detections
+
+        except Exception as e:
+            logger.error(f"Error during new object detection: {str(e)}", exc_info=True)
+            return []
+
+    def draw_detections(self, frame: np.ndarray, detections: List[Detection], new_objects: Optional[List[Detection]] = None) -> np.ndarray:
         """
         Draw bounding boxes and labels on frame for debugging.
 
         Args:
             frame: Input frame to draw on
-            detections: List of Detection objects
+            detections: List of Detection objects to draw
+            new_objects: Optional list of new Detection objects (will be drawn with different color)
 
         Returns:
             Frame with drawn bounding boxes and labels
         """
         output_frame = frame.copy()
 
+        # Create set of new object track_ids for quick lookup
+        new_track_ids = set()
+        if new_objects is not None:
+            new_track_ids = {d.track_id for d in new_objects if d.track_id is not None}
+
         for detection in detections:
             x1, y1, x2, y2 = detection.bbox
 
-            # Draw bounding box
-            color = (0, 255, 0)  # Green color for bounding box
+            # Determine color based on whether this is a new object
+            is_new = detection.track_id is not None and detection.track_id in new_track_ids
+            if is_new:
+                color = (0, 255, 255)  # Yellow/Cyan for new objects
+            else:
+                color = (0, 255, 0)  # Green for tracked objects
+
             thickness = 2
             cv2.rectangle(output_frame, (x1, y1), (x2, y2), color, thickness)
 
             # Prepare label text
-            label = f"{detection.class_name} {detection.confidence:.2f}"
+            track_info = f" ID:{detection.track_id}" if detection.track_id is not None else ""
+            new_marker = " [NEW]" if is_new else ""
+            label = f"{detection.class_name} {detection.confidence:.2f}{track_info}{new_marker}"
 
             # Calculate text size for background
             (text_width, text_height), baseline = cv2.getTextSize(

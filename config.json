@@ -4,5 +4,10 @@
     "width": 1920,
     "height": 1080,
     "fps": 30
+  },
+  "object_detection": {
+    "confidence_threshold": 0.25,
+    "detection_interval": 5,
+    "min_movement_pixels": 5.0
   }
 }
