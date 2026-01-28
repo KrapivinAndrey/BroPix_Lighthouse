@@ -167,7 +167,8 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
     """
     Display video stream from camera in real-time for debugging.
 
-    Shows FPS counter and camera status. Press ESC or Q to exit.
+    Shows FPS counter, camera status, and detected objects with bounding boxes.
+    Press ESC or Q to exit.
 
     Args:
         camera: Camera instance to use. If None, creates new camera from config.
@@ -184,6 +185,23 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             height=camera_config.get("height"),
             fps=camera_config.get("fps"),
         )
+
+    # Initialize object detector
+    detector = None
+    try:
+        from src.object_detection import ObjectDetector, ULTRALYTICS_AVAILABLE
+
+        if not ULTRALYTICS_AVAILABLE:
+            logger.warning("Object detection not available. Install ultralytics: pip install ultralytics")
+        else:
+            detector_config = config.get("object_detection", {}) if config else {}
+            confidence_threshold = detector_config.get("confidence_threshold", 0.25)
+            detector = ObjectDetector(confidence_threshold=confidence_threshold)
+            logger.info("Object detector initialized successfully")
+    except ImportError as e:
+        logger.warning(f"Object detection not available. Install ultralytics: pip install ultralytics. Error: {str(e)}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize object detector: {str(e)}. Continuing without detection.")
 
     try:
         camera.connect()
@@ -205,6 +223,16 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                 logger.warning("Failed to read frame from camera")
                 break
 
+            # Detect objects if detector is available
+            detections = []
+            if detector is not None:
+                try:
+                    detections = detector.detect(frame)
+                    # Draw bounding boxes on frame
+                    frame = detector.draw_detections(frame, detections)
+                except Exception as e:
+                    logger.warning(f"Error during object detection: {str(e)}")
+
             # Calculate FPS
             fps_frame_count += 1
             elapsed = time.time() - fps_start_time
@@ -216,9 +244,11 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             # Draw FPS and status on frame
             fps_text = f"FPS: {fps_current:.1f}"
             status_text = f"Camera: {camera.index} | Resolution: {frame.shape[1]}x{frame.shape[0]}"
+            objects_text = f"Objects detected: {len(detections)}"
 
             cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             cv2.putText(frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, objects_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
             cv2.imshow(window_name, frame)
 
