@@ -7,8 +7,9 @@
   },
   "object_detection": {
     "confidence_threshold": 0.25,
-    "detection_interval": 5,
-    "min_movement_pixels": 5.0
+    "detection_interval": 15,
+    "min_movement_pixels": 5.0,
+    "model_path": "yolov8s.pt"
   },
   "speed": {
     "max_speed_kmh": 5.00,

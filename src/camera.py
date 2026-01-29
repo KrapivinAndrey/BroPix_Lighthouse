@@ -454,12 +454,10 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
     # Get detection interval from config (default: 5 frames)
     detection_config = config.get("object_detection", {}) if config else {}
     detection_interval = detection_config.get("detection_interval", 5)
-    min_movement_pixels = detection_config.get("min_movement_pixels", 5.0)
+    highres_detection_imgsz = detection_config.get("highres_detection_imgsz")
     logger.info(f"Detection interval set to {detection_interval} frames")
-    logger.info(f"Minimum movement threshold: {min_movement_pixels} pixels")
-
-    # Initialize movement tracker
-    movement_tracker = MovementTracker(min_movement_pixels=min_movement_pixels)
+    if highres_detection_imgsz is not None:
+        logger.info(f"High-res detection imgsz: {highres_detection_imgsz}")
 
     # Initialize speed tracker
     speed_tracker = None
@@ -523,65 +521,47 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             if detector is not None:
                 try:
                     if frame_count % detection_interval == 0:
-                        # Full detection for new objects
-                        all_detections = detector.track(frame)
-                        
+                        # Full detection for new objects (all objects) with optional higher imgsz
+                        all_detections = detector.track(
+                            frame,
+                            imgsz=highres_detection_imgsz,
+                        )
+
                         # Save previous track IDs before updating
                         previous_track_ids = set(tracked_objects.keys())
-                        
-                        # Filter out static objects and update tracked objects dictionary
-                        current_track_ids = set()
-                        moving_detections = []
-                        for det in all_detections:
-                            if det.track_id is not None:
-                                # Check if object is moving
-                                if movement_tracker.is_moving(det.track_id, det.bbox):
-                                    moving_detections.append(det)
-                                    tracked_objects[det.track_id] = det
-                                    current_track_ids.add(det.track_id)
-                                else:
-                                    # Static object - remove from tracking
-                                    movement_tracker.remove_track(det.track_id)
-                        
+
+                        # Update tracked objects with all current detections
+                        tracked_objects = {
+                            det.track_id: det
+                            for det in all_detections
+                            if det.track_id is not None
+                        }
+
+                        current_track_ids = set(tracked_objects.keys())
+
                         # Find new objects (those not in previous tracked_objects)
-                        new_detections = [det for det in moving_detections if det.track_id is not None and det.track_id not in previous_track_ids]
-                        
-                        # Remove objects that are no longer detected or are static
-                        tracked_objects = {tid: tracked_objects[tid] for tid in current_track_ids if tid in tracked_objects}
-                        
-                        # Clean up movement tracker for objects no longer detected
-                        for tid in list(movement_tracker.position_history.keys()):
-                            if tid not in current_track_ids:
-                                movement_tracker.remove_track(tid)
-                        
-                        detections = moving_detections
-                        logger.debug(f"Full detection: {len(all_detections)} total, {len(moving_detections)} moving, {len(new_detections)} new")
+                        new_detections = [
+                            det
+                            for det in all_detections
+                            if det.track_id is not None and det.track_id not in previous_track_ids
+                        ]
+
+                        detections = all_detections
+                        logger.debug(
+                            f"Full detection: {len(all_detections)} total, {len(new_detections)} new"
+                        )
                     else:
-                        # Track existing objects
+                        # Track existing objects (all objects, without movement filtering)
                         tracked_detections = detector.track(frame)
-                        
-                        # Filter out static objects
-                        moving_detections = []
-                        for det in tracked_detections:
-                            if det.track_id is not None:
-                                # Check if object is moving
-                                if movement_tracker.is_moving(det.track_id, det.bbox):
-                                    moving_detections.append(det)
-                                    tracked_objects[det.track_id] = det
-                                else:
-                                    # Static object - remove from tracking
-                                    movement_tracker.remove_track(det.track_id)
-                        
-                        # Update tracked objects and remove static ones
-                        current_track_ids = {det.track_id for det in moving_detections if det.track_id is not None}
-                        tracked_objects = {tid: tracked_objects[tid] for tid in current_track_ids if tid in tracked_objects}
-                        
-                        # Clean up movement tracker for objects no longer detected
-                        for tid in list(movement_tracker.position_history.keys()):
-                            if tid not in current_track_ids:
-                                movement_tracker.remove_track(tid)
-                        
-                        detections = moving_detections
+
+                        # Update tracked objects with all current detections
+                        tracked_objects = {
+                            det.track_id: det
+                            for det in tracked_detections
+                            if det.track_id is not None
+                        }
+
+                        detections = tracked_detections
                         new_detections = []  # No new objects when just tracking
                     
                     # Calculate speeds for detected objects
@@ -627,7 +607,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             # Draw FPS and status on frame
             fps_text = f"FPS: {fps_current:.1f}"
             status_text = f"Camera: {camera.index} | Resolution: {frame.shape[1]}x{frame.shape[0]}"
-            objects_text = f"Moving objects: {len(detections)} (Tracked: {len(tracked_objects)}, New: {len(new_detections)})"
+            objects_text = f"Objects: {len(detections)} (Tracked: {len(tracked_objects)}, New: {len(new_detections)})"
             detection_mode_text = f"Mode: {'Detection' if frame_count % detection_interval == 0 else 'Tracking'}"
             
             # Add speed status if speed tracking is enabled

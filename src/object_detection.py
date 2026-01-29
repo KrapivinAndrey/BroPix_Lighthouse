@@ -95,12 +95,13 @@ class ObjectDetector:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize object detector: {str(e)}") from e
 
-    def detect(self, frame: np.ndarray) -> List[Detection]:
+    def detect(self, frame: np.ndarray, imgsz: Optional[int] = None) -> List[Detection]:
         """
         Detect objects in a video frame.
 
         Args:
             frame: Input frame as numpy array (BGR format)
+            imgsz: Optional inference image size for better small-object detection
 
         Returns:
             List of Detection objects with bounding boxes and class information
@@ -110,7 +111,10 @@ class ObjectDetector:
 
         try:
             # Run inference
-            results = self.model(frame, conf=self.confidence_threshold, verbose=False)
+            kwargs = {"conf": self.confidence_threshold, "verbose": False}
+            if imgsz is not None:
+                kwargs["imgsz"] = imgsz
+            results = self.model(frame, **kwargs)
 
             detections = []
             if results and len(results) > 0:
@@ -136,7 +140,7 @@ class ObjectDetector:
             logger.error(f"Error during object detection: {str(e)}", exc_info=True)
             return []
 
-    def track(self, frame: np.ndarray) -> List[Detection]:
+    def track(self, frame: np.ndarray, imgsz: Optional[int] = None) -> List[Detection]:
         """
         Track objects in a video frame using YOLO tracking.
 
@@ -145,6 +149,7 @@ class ObjectDetector:
 
         Args:
             frame: Input frame as numpy array (BGR format)
+            imgsz: Optional inference image size for better small-object detection
 
         Returns:
             List of Detection objects with bounding boxes, class information, and track_id
@@ -154,7 +159,14 @@ class ObjectDetector:
 
         try:
             # Run tracking inference
-            results = self.model.track(frame, conf=self.confidence_threshold, verbose=False, persist=True)
+            track_kwargs = {
+                "conf": self.confidence_threshold,
+                "verbose": False,
+                "persist": True,
+            }
+            if imgsz is not None:
+                track_kwargs["imgsz"] = imgsz
+            results = self.model.track(frame, **track_kwargs)
 
             detections = []
             if results and len(results) > 0:
