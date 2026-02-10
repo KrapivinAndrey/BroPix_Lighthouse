@@ -4,7 +4,6 @@ Main entry point for the application
 
 import logging
 import sys
-from pathlib import Path
 
 from src.camera import CameraError, display_video_stream, load_config
 

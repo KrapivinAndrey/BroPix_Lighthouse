@@ -71,4 +71,3 @@ def test_load_config_missing_camera_index(tmp_path: Path) -> None:
         load_config(config_path=config_path)
 
     assert "must contain 'index' field" in str(exc_info.value)
-

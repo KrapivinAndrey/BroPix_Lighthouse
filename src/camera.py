@@ -32,7 +32,13 @@ class Camera:
     and manage camera resources safely.
     """
 
-    def __init__(self, index: int = 0, width: Optional[int] = None, height: Optional[int] = None, fps: Optional[int] = None):
+    def __init__(
+        self,
+        index: int = 0,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: Optional[int] = None,
+    ):
         """
         Initialize camera with specified parameters.
 
@@ -64,7 +70,10 @@ class Camera:
             self.cap = cv2.VideoCapture(self.index)
 
             if not self.cap.isOpened():
-                raise CameraError(f"Failed to open camera at index {self.index}. Camera may be in use or not connected.")
+                raise CameraError(
+                    f"Failed to open camera at index {self.index}. Camera may be in "
+                    "use or not connected."
+                )
 
             # Configure camera properties if specified
             if self.width is not None:

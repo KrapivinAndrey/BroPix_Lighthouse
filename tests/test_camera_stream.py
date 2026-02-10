@@ -66,8 +66,19 @@ def test_display_video_stream_uses_camera_from_config(monkeypatch: pytest.Monkey
     created_params: dict = {}
 
     class DummyCam(Camera):
-        def __init__(self, index: int, width: int | None = None, height: int | None = None, fps: int | None = None):  # type: ignore[override]
-            created_params.update(index=index, width=width, height=height, fps=fps)
+        def __init__(
+            self,
+            index: int,
+            width: int | None = None,
+            height: int | None = None,
+            fps: int | None = None,
+        ):  # type: ignore[override]
+            created_params.update(
+                index=index,
+                width=width,
+                height=height,
+                fps=fps,
+            )
             self.index = index
             self._frames_left = 1
 
@@ -278,4 +289,3 @@ def test_display_video_stream_unexpected_error_raises(monkeypatch: pytest.Monkey
 
     with pytest.raises(RuntimeError):
         display_video_stream(camera=dummy_camera, config={"camera": {"index": 0}})
-

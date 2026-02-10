@@ -108,4 +108,3 @@ def test_main_unexpected_exception(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_main_module_entrypoint() -> None:
     """Точка входа: в модуле main есть вызываемая функция main."""
     assert callable(getattr(main_module, "main"))
-

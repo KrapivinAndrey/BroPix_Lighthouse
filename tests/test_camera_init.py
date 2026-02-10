@@ -133,9 +133,6 @@ def test_camera_context_manager_calls_connect_and_release(monkeypatch: pytest.Mo
 
     calls = {"connect": 0, "release": 0}
 
-    original_connect = Camera.connect
-    original_release = Camera.release
-
     def fake_connect(self: Camera) -> bool:  # noqa: D401
         """Счётчик вызовов connect."""
         calls["connect"] += 1
@@ -154,4 +151,3 @@ def test_camera_context_manager_calls_connect_and_release(monkeypatch: pytest.Mo
 
     assert calls["connect"] == 1
     assert calls["release"] == 1
-

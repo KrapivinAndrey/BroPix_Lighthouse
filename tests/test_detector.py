@@ -1,6 +1,3 @@
-from types import SimpleNamespace
-from typing import List
-
 import builtins
 import importlib
 from types import SimpleNamespace
@@ -10,7 +7,7 @@ import numpy as np
 import pytest
 
 import src.detector as detector_module
-from src.detector import DetectionConfig, YOLOPeopleDetector
+from src.detector import DetectionConfig
 
 
 class DummyYOLO:
@@ -83,4 +80,3 @@ def test_yolo_people_detector_success(monkeypatch: pytest.MonkeyPatch) -> None:
     x1, y1, x2, y2, score = detections[0]
     assert (x1, y1, x2, y2) == (10, 20, 110, 220)
     assert score == pytest.approx(0.9, rel=1e-3)
-
