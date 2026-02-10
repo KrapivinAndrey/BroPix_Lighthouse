@@ -60,4 +60,3 @@ def compute_speed_kmh(
         return None
 
     return v_kmh
-

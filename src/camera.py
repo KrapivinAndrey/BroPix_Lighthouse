@@ -339,7 +339,13 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                             tracks[track_id] = {
                                 "last_pos": (cx, cy),
                                 "last_time": now,
-                                "speed_kmh": speed_kmh if speed_kmh is not None else prev.get("speed_kmh") if prev else None,
+                                "speed_kmh": (
+                                    speed_kmh
+                                    if speed_kmh is not None
+                                    else prev.get("speed_kmh")
+                                    if prev
+                                    else None
+                                ),
                             }
                         else:
                             track_id = None

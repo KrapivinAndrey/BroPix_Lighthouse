@@ -1,7 +1,4 @@
 import math
-import time
-
-import pytest  # type: ignore[import]
 
 from src.speed_utils import DEFAULT_PX_TO_M_SCALE, compute_speed_kmh
 
@@ -61,4 +58,3 @@ def test_compute_speed_kmh_custom_scale() -> None:
     # 20 px * 0.1 м/px = 2 м / 2 c = 1 м/с → 3.6 км/ч
     assert v_kmh is not None
     assert math.isclose(v_kmh, 3.6, rel_tol=1e-3)
-
