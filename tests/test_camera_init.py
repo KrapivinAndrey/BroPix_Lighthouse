@@ -12,7 +12,7 @@ class DummyCapture:
 
     def __init__(self, should_open: bool = True) -> None:
         self._opened = should_open
-        self.props = {}
+        self.props: dict[int, float] = {}
 
     def isOpened(self) -> bool:  # noqa: N802 - совместимость с OpenCV API
         return self._opened

@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -158,7 +158,8 @@ def load_config(config_path: Optional[Path] = None) -> dict:
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
+            # Явно аннотируем тип конфигурации, чтобы избежать Any из json.load.
+            config: Dict[str, Any] = json.load(f)
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in configuration file: {str(e)}") from e
 
@@ -256,7 +257,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         while True:
             ret, frame = camera.read_frame()
 
-            if not ret:
+            if not ret or frame is None:
                 logger.warning("Failed to read frame from camera")
                 break
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
@@ -53,7 +53,9 @@ class YOLOPeopleDetector:
             config: Объект конфигурации детектора. Если None, используется значение по умолчанию.
         """
         self.config = config or DetectionConfig()
-        self._model = None
+        # Храним модель YOLO в атрибуте с типом Any, поскольку
+        # сторонняя библиотека не предоставляет стабильных аннотаций.
+        self._model: Any = None
         self._load_model()
 
     def _load_model(self) -> None:
