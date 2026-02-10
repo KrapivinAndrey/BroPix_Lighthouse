@@ -77,6 +77,8 @@ def test_yolo_people_detector_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # Ожидаем один детект для класса person (cls = 0)
     assert len(detections) == 1
-    x1, y1, x2, y2, score = detections[0]
+    x1, y1, x2, y2, score, track_id = detections[0]
     assert (x1, y1, x2, y2) == (10, 20, 110, 220)
     assert score == pytest.approx(0.9, rel=1e-3)
+    # В режиме без реального трекинга track_id может быть None.
+    assert track_id is None or isinstance(track_id, int)

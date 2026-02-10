@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from src.speed_utils import compute_speed_kmh
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -252,6 +254,11 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         # Счётчик кадров видеопотока
         frame_idx = 0
 
+        # Хранилище треков для расчёта скорости:
+        # track_id -> {"last_pos": (cx, cy), "last_time": float, "speed_kmh": Optional[float]}
+        tracks: Dict[int, Dict[str, Any]] = {}
+        track_ttl_seconds = 2.0
+
         logger.info("Starting video stream. Press ESC or Q to exit.")
 
         while True:
@@ -281,10 +288,73 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                     detection_enabled = False
                     detections = []
                 else:
-                    # Рисуем рамки только вокруг людей
-                    for x1, y1, x2, y2, score in detections:
+                    now = time.time()
+
+                    # Периодическая очистка устаревших треков
+                    if frame_idx % 30 == 0:
+                        expired_ids = []
+                        for track_id, data in tracks.items():
+                            last_time_val = data.get("last_time")
+                            if isinstance(last_time_val, (int, float)) and now - last_time_val > track_ttl_seconds:
+                                expired_ids.append(track_id)
+                        for track_id in expired_ids:
+                            tracks.pop(track_id, None)
+
+                    # Рисуем рамки только вокруг людей и рассчитываем скорость по трек-идентификатору.
+                    # Поддерживаем оба формата детекций:
+                    # (x1, y1, x2, y2, score) и (x1, y1, x2, y2, score, track_id).
+                    for det in detections:
+                        if len(det) == 5:
+                            x1, y1, x2, y2, score = det
+                            track_id = None
+                        elif len(det) == 6:
+                            x1, y1, x2, y2, score, track_id = det
+                        else:
+                            # Неизвестный формат — пропускаем.
+                            continue
+                        cx = (x1 + x2) / 2.0
+                        cy = (y1 + y2) / 2.0
+
+                        speed_kmh = None
+
+                        if track_id is not None and track_id >= 0:
+                            prev = tracks.get(track_id)
+                            if prev is not None:
+                                last_pos = prev.get("last_pos")
+                                last_time_val = prev.get("last_time")
+                                if (
+                                    isinstance(last_pos, tuple)
+                                    and len(last_pos) == 2
+                                    and isinstance(last_time_val, (int, float))
+                                ):
+                                    speed_kmh = compute_speed_kmh(
+                                        last_pos,
+                                        float(last_time_val),
+                                        (cx, cy),
+                                        now,
+                                    )
+
+                            tracks[track_id] = {
+                                "last_pos": (cx, cy),
+                                "last_time": now,
+                                "speed_kmh": speed_kmh if speed_kmh is not None else prev.get("speed_kmh") if prev else None,
+                            }
+                        else:
+                            track_id = None
+
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                        label = f"person {score:.2f}"
+
+                        if track_id is not None:
+                            track_data = tracks.get(track_id, {})
+                            label_speed = track_data.get("speed_kmh")
+                        else:
+                            label_speed = None
+
+                        if label_speed is not None:
+                            label = f"person {score:.2f} | {label_speed:.1f} km/h"
+                        else:
+                            label = f"person {score:.2f}"
+
                         cv2.putText(
                             frame,
                             label,
