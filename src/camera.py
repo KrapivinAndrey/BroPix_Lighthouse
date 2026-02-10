@@ -316,6 +316,8 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         cy = (y1 + y2) / 2.0
 
                         speed_kmh = None
+                        # Порог скорости в км/ч, выше которого рамка считается «красной»
+                        SPEED_LIMIT_KMH = 8.0
 
                         if track_id is not None and track_id >= 0:
                             prev = tracks.get(track_id)
@@ -342,13 +344,24 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         else:
                             track_id = None
 
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-
+                        # Получаем последнюю оценённую скорость из трека (если есть)
                         if track_id is not None:
                             track_data = tracks.get(track_id, {})
                             label_speed = track_data.get("speed_kmh")
                         else:
                             label_speed = None
+
+                        # Цвет по умолчанию — зелёный (объект не превышает лимит
+                        # или скорость ещё не рассчитана).
+                        box_color = (0, 255, 0)
+                        text_color = (0, 255, 0)
+
+                        # Если скорость известна и выше порога — красим в красный.
+                        if label_speed is not None and label_speed > SPEED_LIMIT_KMH:
+                            box_color = (0, 0, 255)
+                            text_color = (0, 0, 255)
+
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
                         if label_speed is not None:
                             label = f"person {score:.2f} | {label_speed:.1f} km/h"
@@ -361,7 +374,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                             (x1, max(y1 - 10, 0)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.6,
-                            (0, 0, 255),
+                            text_color,
                             2,
                         )
 
