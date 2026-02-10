@@ -1,8 +1,8 @@
 {
   "camera": {
-    "index": 0,
-    "width": 1280,
-    "height": 720,
+    "index": 1,
+    "width": 640,
+    "height": 480,
     "fps": 30
   },
   "detection": {

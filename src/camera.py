@@ -239,6 +239,9 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         fps_frame_count = 0
         fps_current = 0.0
 
+        # Счётчик кадров видеопотока
+        frame_idx = 0
+
         logger.info("Starting video stream. Press ESC or Q to exit.")
 
         while True:
@@ -247,6 +250,9 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             if not ret:
                 logger.warning("Failed to read frame from camera")
                 break
+
+            # Инкремент счётчика кадров
+            frame_idx += 1
 
             # Расчёт FPS
             fps_frame_count += 1
