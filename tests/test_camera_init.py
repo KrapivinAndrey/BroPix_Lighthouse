@@ -111,3 +111,47 @@ def test_camera_release_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     # Повторный вызов не должен падать
     cam.release()
 
+
+def test_camera_connect_unexpected_error_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Если при создании VideoCapture выбрасывается ошибка, она оборачивается в CameraError."""
+
+    def failing_videocapture(index: int):  # noqa: ARG001, ANN001
+        raise RuntimeError("low-level failure")
+
+    monkeypatch.setattr("src.camera.cv2.VideoCapture", failing_videocapture)
+
+    cam = Camera(index=0)
+
+    with pytest.raises(CameraError) as exc_info:
+        cam.connect()
+
+    assert "Unexpected error connecting to camera" in str(exc_info.value)
+
+
+def test_camera_context_manager_calls_connect_and_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Проверяем, что контекстный менеджер вызывает connect и release."""
+
+    calls = {"connect": 0, "release": 0}
+
+    original_connect = Camera.connect
+    original_release = Camera.release
+
+    def fake_connect(self: Camera) -> bool:  # noqa: D401
+        """Счётчик вызовов connect."""
+        calls["connect"] += 1
+        return True
+
+    def fake_release(self: Camera) -> None:  # noqa: D401
+        """Счётчик вызовов release."""
+        calls["release"] += 1
+        # Не вызываем оригинальный release, чтобы не трогать реальные ресурсы.
+
+    monkeypatch.setattr("src.camera.Camera.connect", fake_connect)
+    monkeypatch.setattr("src.camera.Camera.release", fake_release)
+
+    with Camera(index=0) as cam:
+        assert isinstance(cam, Camera)
+
+    assert calls["connect"] == 1
+    assert calls["release"] == 1
+
