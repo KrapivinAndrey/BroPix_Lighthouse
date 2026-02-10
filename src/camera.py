@@ -165,13 +165,15 @@ def load_config(config_path: Optional[Path] = None) -> dict:
 
 def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict] = None) -> None:
     """
-    Display video stream from camera in real-time for debugging.
+    Отображение видеопотока с камеры в реальном времени для отладки.
 
-    Shows FPS counter and camera status. Press ESC or Q to exit.
+    Показывает FPS, статус камеры, а при включённой опции детекции —
+    прямоугольники вокруг обнаруженных людей (класс person из COCO).
+    Для выхода нажмите ESC или Q.
 
     Args:
-        camera: Camera instance to use. If None, creates new camera from config.
-        config: Configuration dictionary. If None, loads from config.json.
+        camera: Экземпляр камеры. Если None — создаётся из конфигурации.
+        config: Конфигурационный словарь. Если None — загружается из config.json.
     """
     if camera is None:
         if config is None:
@@ -184,6 +186,47 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             height=camera_config.get("height"),
             fps=camera_config.get("fps"),
         )
+
+    # Подготовка детектора людей YOLO (опционально, через конфиг)
+    yolo_detector = None
+    detection_enabled = False
+    detection_config = {}
+
+    if config is None:
+        # Если конфиг не передан — пытаемся загрузить для детекции отдельно
+        try:
+            config = load_config()
+        except Exception:
+            config = None
+
+    if config is not None:
+        detection_config = config.get("detection", {})
+        detection_enabled = bool(detection_config.get("enabled", False))
+
+    if detection_enabled:
+        try:
+            from src.detector import DetectionConfig, YOLOPeopleDetector
+
+            det_cfg = DetectionConfig(
+                model_path=detection_config.get("model_path", "yolo11n.pt"),
+                conf=float(detection_config.get("conf", 0.5)),
+                device=detection_config.get("device"),
+                imgsz=int(detection_config.get("imgsz", 640)),
+            )
+            yolo_detector = YOLOPeopleDetector(det_cfg)
+
+            if not yolo_detector.is_available():
+                logger.warning("YOLO-детектор людей недоступен, детекция будет отключена.")
+                detection_enabled = False
+            else:
+                logger.info(
+                    "YOLO-детекция людей включена (модель: %s, порог: %.2f).",
+                    det_cfg.model_path,
+                    det_cfg.conf,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Не удалось инициализировать YOLO-детектор людей: %s", e)
+            detection_enabled = False
 
     try:
         camera.connect()
@@ -205,7 +248,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                 logger.warning("Failed to read frame from camera")
                 break
 
-            # Calculate FPS
+            # Расчёт FPS
             fps_frame_count += 1
             elapsed = time.time() - fps_start_time
             if elapsed >= 1.0:
@@ -213,16 +256,55 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                 fps_frame_count = 0
                 fps_start_time = time.time()
 
-            # Draw FPS and status on frame
+            # Детекция людей с помощью YOLO (если включена и доступна)
+            if detection_enabled and yolo_detector is not None:
+                try:
+                    detections = yolo_detector.detect(frame)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Ошибка во время детекции людей: %s. Детекция будет отключена.", e)
+                    detection_enabled = False
+                    detections = []
+                else:
+                    # Рисуем рамки только вокруг людей
+                    for x1, y1, x2, y2, score in detections:
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                        label = f"person {score:.2f}"
+                        cv2.putText(
+                            frame,
+                            label,
+                            (x1, max(y1 - 10, 0)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (0, 0, 255),
+                            2,
+                        )
+
+            # Подписи FPS и статуса камеры
             fps_text = f"FPS: {fps_current:.1f}"
             status_text = f"Camera: {camera.index} | Resolution: {frame.shape[1]}x{frame.shape[0]}"
 
-            cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, status_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(
+                frame,
+                fps_text,
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
+            )
+            cv2.putText(
+                frame,
+                status_text,
+                (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+            )
 
             cv2.imshow(window_name, frame)
 
-            # Check for exit key (ESC or Q)
+            # Проверка клавиш выхода (ESC или Q)
             key = cv2.waitKey(1) & 0xFF
             if key == 27 or key == ord("q") or key == ord("Q"):  # ESC or Q
                 logger.info("Exit requested by user")

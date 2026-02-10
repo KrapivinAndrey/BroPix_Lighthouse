@@ -1,8 +1,15 @@
 {
   "camera": {
-    "index": 1,
-    "width": 1920,
-    "height": 1080,
+    "index": 0,
+    "width": 1280,
+    "height": 720,
     "fps": 30
+  },
+  "detection": {
+    "enabled": true,
+    "model_path": "yolo11n.pt",
+    "conf": 0.5,
+    "imgsz": 640,
+    "device": "cpu"
   }
 }
