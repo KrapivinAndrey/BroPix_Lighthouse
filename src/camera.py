@@ -304,11 +304,12 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                     # Поддерживаем оба формата детекций:
                     # (x1, y1, x2, y2, score) и (x1, y1, x2, y2, score, track_id).
                     for det in detections:
+                        det_track_id: Optional[int]
                         if len(det) == 5:
                             x1, y1, x2, y2, score = det
-                            track_id = None
+                            det_track_id = None
                         elif len(det) == 6:
-                            x1, y1, x2, y2, score, track_id = det
+                            x1, y1, x2, y2, score, det_track_id = det
                         else:
                             # Неизвестный формат — пропускаем.
                             continue
@@ -319,8 +320,8 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         # Порог скорости в км/ч, выше которого рамка считается «красной»
                         SPEED_LIMIT_KMH = 8.0
 
-                        if track_id is not None and track_id >= 0:
-                            prev = tracks.get(track_id)
+                        if det_track_id is not None and det_track_id >= 0:
+                            prev = tracks.get(det_track_id)
                             if prev is not None:
                                 last_pos = prev.get("last_pos")
                                 last_time_val = prev.get("last_time")
@@ -336,7 +337,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                                         now,
                                     )
 
-                            tracks[track_id] = {
+                            tracks[det_track_id] = {
                                 "last_pos": (cx, cy),
                                 "last_time": now,
                                 "speed_kmh": (
@@ -348,11 +349,11 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                                 ),
                             }
                         else:
-                            track_id = None
+                            det_track_id = None
 
                         # Получаем последнюю оценённую скорость из трека (если есть)
-                        if track_id is not None:
-                            track_data = tracks.get(track_id, {})
+                        if det_track_id is not None:
+                            track_data = tracks.get(det_track_id, {})
                             label_speed = track_data.get("speed_kmh")
                         else:
                             label_speed = None
