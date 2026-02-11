@@ -1,0 +1,17 @@
+---
+description: Always rebuild frontend after changing web interface code
+globs: frontend/src/**/*.*
+alwaysApply: false
+---
+
+# Frontend rebuild after changes
+
+- When changing the web interface code (files in `frontend/src/`), **always** rebuild the frontend.
+- Use the command:
+
+```bash
+cd frontend && npm run build
+```
+
+- Run the build after significant changes and before starting or restarting the backend so that `frontend/dist` contains an up-to-date bundle.
+
