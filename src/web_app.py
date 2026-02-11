@@ -297,7 +297,8 @@ def _camera_worker() -> None:
                                             "hypothesisId": "H1-H4",
                                         }
                                         with open(
-                                            r"c:\Users\KrapivinAV-hp\PycharmProjects\LighthouseForCycles\.cursor\debug.log",
+                                            r"c:\Users\KrapivinAV-hp\PycharmProjects\LighthouseForCycles"
+                                            r"\.cursor\debug.log",
                                             "a",
                                             encoding="utf-8",
                                         ) as _agent_f:
