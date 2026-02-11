@@ -101,6 +101,13 @@ def _camera_worker() -> None:
             camera_cfg = config.get("camera", {})
             detection_cfg = config.get("detection", {})
             speed_limit_kmh = float(config.get("speed_limit_kmh", 8.0))
+            # Шаг по кадрам для детекции: 1 — детектить каждый кадр,
+            # 2 — каждый второй, 3 — каждый третий и т.д.
+            # Значение <= 0 принудительно заменяем на 1.
+            detection_frame_stride = int(config.get("detection_frame_stride", 1) or 1)
+            if detection_frame_stride <= 0:
+                detection_frame_stride = 1
+            red_hold_seconds = float(config.get("red_hold_seconds", 2.0))
 
             camera_index = int(camera_cfg.get("index", 0))
             width = camera_cfg.get("width")
@@ -136,9 +143,21 @@ def _camera_worker() -> None:
                 time.sleep(1.0)
                 continue
 
+            # Хранилище треков:
+            # track_id -> {
+            #   "last_pos": (cx, cy),
+            #   "last_time": float,
+            #   "speed_kmh": Optional[float],
+            #   "is_over_limit": bool,
+            #   "last_over_limit_time": Optional[float],
+            # }
             tracks: Dict[int, Dict[str, Any]] = {}
             track_ttl_seconds = 2.0
             frame_idx = 0
+
+            # Последнее состояние «превышения» для лампы, чтобы не дёргать
+            # детекцию на каждом кадре, но сохранять визуальное состояние.
+            last_is_exceeded_any = False
 
             try:
                 while not state.stop_event.is_set():
@@ -149,9 +168,16 @@ def _camera_worker() -> None:
                     frame_idx += 1
                     now = time.time()
 
-                    is_exceeded_any = False
+                    # По умолчанию берём предыдущее состояние лампы.
+                    is_exceeded_any = last_is_exceeded_any
 
-                    if detection_enabled and yolo_detector is not None:
+                    # Детекцию выполняем не на каждом кадре, а с заданным шагом,
+                    # чтобы уменьшить нагрузку на CPU/GPU.
+                    if (
+                        detection_enabled
+                        and yolo_detector is not None
+                        and frame_idx % detection_frame_stride == 0
+                    ):
                         try:
                             detections = yolo_detector.detect(frame)
                         except Exception:  # noqa: BLE001
@@ -182,43 +208,95 @@ def _camera_worker() -> None:
                             cy = (y1 + y2) / 2.0
 
                             speed_kmh: Optional[float] = None
+                            prev: Dict[str, Any] = {}
 
                             if det_track_id is not None and det_track_id >= 0:
-                                prev = tracks.get(det_track_id)
-                                if prev is not None:
-                                    last_pos = prev.get("last_pos")
-                                    last_time_val = prev.get("last_time")
+                                prev = tracks.get(det_track_id, {})
+                                last_pos = prev.get("last_pos")
+                                last_time_val = prev.get("last_time")
+                                if (
+                                    isinstance(last_pos, tuple)
+                                    and len(last_pos) == 2
+                                    and isinstance(last_time_val, (int, float))
+                                ):
+                                    speed_kmh = compute_speed_kmh(
+                                        last_pos,
+                                        float(last_time_val),
+                                        (cx, cy),
+                                        now,
+                                    )
+
+                                prev_speed = prev.get("speed_kmh")
+                                current_speed = speed_kmh if speed_kmh is not None else prev_speed
+
+                                is_over_limit_prev = bool(prev.get("is_over_limit", False))
+                                last_over_limit_time_prev = prev.get("last_over_limit_time")
+
+                                if current_speed is not None and current_speed > speed_limit_kmh:
+                                    is_over_limit = True
+                                    last_over_limit_time = now
+                                else:
                                     if (
-                                        isinstance(last_pos, tuple)
-                                        and len(last_pos) == 2
-                                        and isinstance(last_time_val, (int, float))
+                                        is_over_limit_prev
+                                        and isinstance(last_over_limit_time_prev, (int, float))
+                                        and now - float(last_over_limit_time_prev) <= red_hold_seconds
                                     ):
-                                        speed_kmh = compute_speed_kmh(
-                                            last_pos,
-                                            float(last_time_val),
-                                            (cx, cy),
-                                            now,
-                                        )
+                                        is_over_limit = True
+                                        last_over_limit_time = last_over_limit_time_prev
+                                    else:
+                                        is_over_limit = False
+                                        last_over_limit_time = last_over_limit_time_prev
 
                                 tracks[det_track_id] = {
                                     "last_pos": (cx, cy),
                                     "last_time": now,
-                                    "speed_kmh": (
-                                        speed_kmh
-                                        if speed_kmh is not None
-                                        else prev.get("speed_kmh")
-                                        if prev
-                                        else None
-                                    ),
+                                    "speed_kmh": current_speed,
+                                    "is_over_limit": is_over_limit,
+                                    "last_over_limit_time": last_over_limit_time,
                                 }
+                            else:
+                                det_track_id = None
+                                current_speed = None
+                                is_over_limit = False
 
                             if det_track_id is not None:
-                                label_speed = tracks.get(det_track_id, {}).get("speed_kmh")
+                                track_data = tracks.get(det_track_id, {})
+                                label_speed = track_data.get("speed_kmh")
+                                is_over_limit = bool(track_data.get("is_over_limit", False))
                             else:
                                 label_speed = None
 
-                            if label_speed is not None and label_speed > speed_limit_kmh:
+                            # Если есть хотя бы один трек с превышением (с учётом задержки) —
+                            # считаем, что маяк должен быть красным.
+                            if is_over_limit:
                                 is_exceeded_any = True
+
+                            # Цвет рамки и текста
+                            box_color = (0, 255, 0)
+                            text_color = (0, 255, 0)
+                            if is_over_limit:
+                                box_color = (0, 0, 255)
+                                text_color = (0, 0, 255)
+
+                            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+
+                            if label_speed is not None:
+                                label = f"person {score:.2f} | {label_speed:.1f} km/h"
+                            else:
+                                label = f"person {score:.2f}"
+
+                            cv2.putText(
+                                frame,
+                                label,
+                                (x1, max(y1 - 10, 0)),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                text_color,
+                                2,
+                            )
+
+                        # Обновляем запомненное состояние лампы только после детекции.
+                        last_is_exceeded_any = is_exceeded_any
 
                     _update_lamp(is_exceeded_any)
                     _update_frame(frame)
@@ -304,6 +382,12 @@ def create_app() -> FastAPI:
                     config["speed_limit_kmh"] = float(payload["speed_limit_kmh"])
                 except (TypeError, ValueError) as exc:
                     raise HTTPException(status_code=400, detail="speed_limit_kmh must be a number") from exc
+
+            if "red_hold_seconds" in payload:
+                try:
+                    config["red_hold_seconds"] = float(payload["red_hold_seconds"])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail="red_hold_seconds must be a number") from exc
 
             state.config = config
             _save_config_to_disk(config)

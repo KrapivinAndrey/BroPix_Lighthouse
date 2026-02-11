@@ -212,12 +212,16 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             config = None
 
     speed_limit_kmh: float = 8.0
+    red_hold_seconds: float = 2.0
     if config is not None:
         detection_config = config.get("detection", {})
         detection_enabled = bool(detection_config.get("enabled", False))
         # Порог скорости в км/ч, выше которого рамка считается «красной».
         # Если в конфиге нет значения, используем безопасное значение по умолчанию.
         speed_limit_kmh = float(config.get("speed_limit_kmh", 8.0))
+        # Время (в секундах), в течение которого рамка остаётся красной
+        # после того, как скорость опустилась ниже порога.
+        red_hold_seconds = float(config.get("red_hold_seconds", 2.0))
 
     if detection_enabled:
         try:
@@ -259,7 +263,13 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         frame_idx = 0
 
         # Хранилище треков для расчёта скорости:
-        # track_id -> {"last_pos": (cx, cy), "last_time": float, "speed_kmh": Optional[float]}
+        # track_id -> {
+        #   "last_pos": (cx, cy),
+        #   "last_time": float,
+        #   "speed_kmh": Optional[float],
+        #   "is_over_limit": bool,
+        #   "last_over_limit_time": Optional[float],
+        # }
         tracks: Dict[int, Dict[str, Any]] = {}
         track_ttl_seconds = 2.0
 
@@ -321,42 +331,66 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         cy = (y1 + y2) / 2.0
 
                         speed_kmh = None
+                        prev: Dict[str, Any] = {}
 
                         if det_track_id is not None and det_track_id >= 0:
-                            prev = tracks.get(det_track_id)
-                            if prev is not None:
-                                last_pos = prev.get("last_pos")
-                                last_time_val = prev.get("last_time")
+                            prev = tracks.get(det_track_id, {})
+                            last_pos = prev.get("last_pos")
+                            last_time_val = prev.get("last_time")
+                            if (
+                                isinstance(last_pos, tuple)
+                                and len(last_pos) == 2
+                                and isinstance(last_time_val, (int, float))
+                            ):
+                                speed_kmh = compute_speed_kmh(
+                                    last_pos,
+                                    float(last_time_val),
+                                    (cx, cy),
+                                    now,
+                                )
+
+                            # Обновляем трек с последними данными
+                            prev_speed = prev.get("speed_kmh")
+                            current_speed = speed_kmh if speed_kmh is not None else prev_speed
+
+                            is_over_limit_prev = bool(prev.get("is_over_limit", False))
+                            last_over_limit_time_prev = prev.get("last_over_limit_time")
+
+                            # Логика задержки красного сигнала:
+                            # 1. Если текущая скорость известна и выше порога — сразу считаем, что есть превышение.
+                            if current_speed is not None and current_speed > speed_limit_kmh:
+                                is_over_limit = True
+                                last_over_limit_time = now
+                            else:
+                                # 2. Иначе полагаемся на историю: держим красный ещё red_hold_seconds.
                                 if (
-                                    isinstance(last_pos, tuple)
-                                    and len(last_pos) == 2
-                                    and isinstance(last_time_val, (int, float))
+                                    is_over_limit_prev
+                                    and isinstance(last_over_limit_time_prev, (int, float))
+                                    and now - float(last_over_limit_time_prev) <= red_hold_seconds
                                 ):
-                                    speed_kmh = compute_speed_kmh(
-                                        last_pos,
-                                        float(last_time_val),
-                                        (cx, cy),
-                                        now,
-                                    )
+                                    is_over_limit = True
+                                    last_over_limit_time = last_over_limit_time_prev
+                                else:
+                                    is_over_limit = False
+                                    last_over_limit_time = last_over_limit_time_prev
 
                             tracks[det_track_id] = {
                                 "last_pos": (cx, cy),
                                 "last_time": now,
-                                "speed_kmh": (
-                                    speed_kmh
-                                    if speed_kmh is not None
-                                    else prev.get("speed_kmh")
-                                    if prev
-                                    else None
-                                ),
+                                "speed_kmh": current_speed,
+                                "is_over_limit": is_over_limit,
+                                "last_over_limit_time": last_over_limit_time,
                             }
                         else:
                             det_track_id = None
+                            current_speed = None
+                            is_over_limit = False
 
                         # Получаем последнюю оценённую скорость из трека (если есть)
                         if det_track_id is not None:
                             track_data = tracks.get(det_track_id, {})
                             label_speed = track_data.get("speed_kmh")
+                            is_over_limit = bool(track_data.get("is_over_limit", False))
                         else:
                             label_speed = None
 
@@ -365,8 +399,8 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         box_color = (0, 255, 0)
                         text_color = (0, 255, 0)
 
-                        # Если скорость известна и выше порога — красим в красный.
-                        if label_speed is not None and label_speed > speed_limit_kmh:
+                        # Если есть флаг превышения с учётом задержки — красим в красный.
+                        if is_over_limit:
                             box_color = (0, 0, 255)
                             text_color = (0, 0, 255)
 

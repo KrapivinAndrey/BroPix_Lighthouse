@@ -12,5 +12,6 @@
     "imgsz": 640,
     "device": "cpu"
   },
-  "speed_limit_kmh": 8.0
+  "speed_limit_kmh": 8.0,
+  "red_hold_seconds": 2.0
 }

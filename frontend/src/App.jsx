@@ -100,8 +100,8 @@ export function App() {
     <div className="page-root">
       <div className="neon-frame page-shell">
         <header className="page-header">
-          <h1 className="logo-text">LighthouseForCycles</h1>
-          <span className="subtitle">Neon Control Panel</span>
+          <h1 className="logo-text">Маяк для велосипедиста</h1>
+          <span className="subtitle">Панель управления</span>
         </header>
 
         <main className="page-main">
