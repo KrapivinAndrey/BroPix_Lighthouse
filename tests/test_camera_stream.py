@@ -212,6 +212,133 @@ def test_display_video_stream_with_detection_success(monkeypatch: pytest.MonkeyP
     display_video_stream(camera=dummy_camera, config=cfg)
 
 
+def test_display_video_stream_box_green_below_speed_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Рамка должна оставаться зелёной, если скорость ниже порога."""
+
+    dummy_camera = DummyCameraForStream(frames_before_stop=3)
+
+    class DummyDetectorWithTrack:
+        def __init__(self, cfg):  # noqa: ANN001
+            self.cfg = cfg
+
+        def is_available(self) -> bool:
+            return True
+
+        def detect(self, frame):  # noqa: ANN001
+            # Детект с track_id, чтобы включился расчёт скорости
+            return [(10, 20, 30, 40, 0.9, 1)]
+
+    def fake_detection_config(*args, **kwargs):  # noqa: ANN001
+        class _Cfg:
+            def __init__(self, **inner_kwargs):  # noqa: ANN001
+                self.__dict__.update(inner_kwargs)
+
+        return _Cfg(**kwargs)
+
+    # Скорость всегда ниже лимита, чтобы цвет не менялся на красный
+    monkeypatch.setattr("src.camera.compute_speed_kmh", lambda *args, **kwargs: 5.0)
+
+    cfg = {
+        "camera": {"index": 0},
+        "detection": {
+            "enabled": True,
+            "model_path": "yolo11n.pt",
+            "conf": 0.5,
+            "imgsz": 640,
+        },
+    }
+
+    dummy_detector_module = SimpleNamespace(
+        DetectionConfig=fake_detection_config,
+        YOLOPeopleDetector=DummyDetectorWithTrack,
+    )
+
+    monkeypatch.setitem(sys.modules, "src.detector", dummy_detector_module)
+
+    rect_calls = []
+
+    def fake_rectangle(img, pt1, pt2, color, thickness):  # noqa: ANN001
+        rect_calls.append((pt1, pt2, color, thickness))
+        return img
+
+    monkeypatch.setattr("src.camera.cv2.rectangle", fake_rectangle)
+    monkeypatch.setattr("src.camera.cv2.putText", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.camera.cv2.imshow", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.camera.cv2.waitKey", lambda delay: 0)
+    monkeypatch.setattr("src.camera.cv2.namedWindow", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.camera.cv2.destroyAllWindows", lambda: None)
+
+    display_video_stream(camera=dummy_camera, config=cfg)
+
+    # Должны быть вызовы rectangle и все цвета должны быть зелёными (0, 255, 0)
+    assert rect_calls
+    for _, _, color, _ in rect_calls:
+        assert color == (0, 255, 0)
+
+
+def test_display_video_stream_box_red_above_speed_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Рамка должна стать красной, если скорость выше порога."""
+
+    dummy_camera = DummyCameraForStream(frames_before_stop=3)
+
+    class DummyDetectorWithTrack:
+        def __init__(self, cfg):  # noqa: ANN001
+            self.cfg = cfg
+
+        def is_available(self) -> bool:
+            return True
+
+        def detect(self, frame):  # noqa: ANN001
+            return [(10, 20, 30, 40, 0.9, 1)]
+
+    def fake_detection_config(*args, **kwargs):  # noqa: ANN001
+        class _Cfg:
+            def __init__(self, **inner_kwargs):  # noqa: ANN001
+                self.__dict__.update(inner_kwargs)
+
+        return _Cfg(**kwargs)
+
+    # Скорость всегда выше лимита, чтобы рамка перекрасилась в красный
+    monkeypatch.setattr("src.camera.compute_speed_kmh", lambda *args, **kwargs: 10.0)
+
+    cfg = {
+        "camera": {"index": 0},
+        "detection": {
+            "enabled": True,
+            "model_path": "yolo11n.pt",
+            "conf": 0.5,
+            "imgsz": 640,
+        },
+    }
+
+    dummy_detector_module = SimpleNamespace(
+        DetectionConfig=fake_detection_config,
+        YOLOPeopleDetector=DummyDetectorWithTrack,
+    )
+
+    monkeypatch.setitem(sys.modules, "src.detector", dummy_detector_module)
+
+    rect_calls = []
+
+    def fake_rectangle(img, pt1, pt2, color, thickness):  # noqa: ANN001
+        rect_calls.append((pt1, pt2, color, thickness))
+        return img
+
+    monkeypatch.setattr("src.camera.cv2.rectangle", fake_rectangle)
+    monkeypatch.setattr("src.camera.cv2.putText", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.camera.cv2.imshow", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.camera.cv2.waitKey", lambda delay: 0)
+    monkeypatch.setattr("src.camera.cv2.namedWindow", lambda *args, **kwargs: None)
+    monkeypatch.setattr("src.camera.cv2.destroyAllWindows", lambda: None)
+
+    display_video_stream(camera=dummy_camera, config=cfg)
+
+    # Среди вызовов rectangle должен быть хотя бы один с красным цветом (0, 0, 255)
+    assert rect_calls
+    colors = {color for _, _, color, _ in rect_calls}
+    assert (0, 0, 255) in colors
+
+
 def test_display_video_stream_yolo_error_disables_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     """Если во время detect() возникает ошибка, детекция должна отключаться без падения цикла."""
 

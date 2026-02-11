@@ -96,7 +96,7 @@ class YOLOPeopleDetector:
 
     def detect(
         self, frame: np.ndarray
-    ) -> List[Tuple[int, int, int, int, float]]:
+    ) -> List[Tuple[int, int, int, int, float, Optional[int]]]:
         """
         Выполнить детекцию людей на одном кадре.
 
@@ -105,35 +105,49 @@ class YOLOPeopleDetector:
 
         Returns:
             Список прямоугольников с людьми:
-            [(x1, y1, x2, y2, score), ...],
+            [(x1, y1, x2, y2, score, track_id), ...],
             где (x1, y1) — левый верхний угол, (x2, y2) — правый нижний,
-            score — уверенность модели (0..1).
+            score — уверенность модели (0..1),
+            track_id — идентификатор трека (int) или None, если трекинг недоступен.
         """
         if self._model is None:
             # Модель не загружена — детекция отключена
             return []
 
         try:
-            # Ultralytics YOLO умеет принимать кадр напрямую (BGR/RGB),
-            # здесь дополнительная конвертация не требуется.
-            results = self._model.predict(
-                frame,
-                imgsz=self.config.imgsz,
-                conf=self.config.conf,
-                device=self.config.device or "cpu",
-                verbose=False,
-            )
+            # Используем режим трекинга Ultralytics YOLO.
+            # persist=True позволяет сохранять внутреннее состояние трекера
+            # между вызовами detect().
+            if hasattr(self._model, "track"):
+                results = self._model.track(  # type: ignore[attr-defined]
+                    frame,
+                    imgsz=self.config.imgsz,
+                    conf=self.config.conf,
+                    device=self.config.device or "cpu",
+                    verbose=False,
+                    persist=True,
+                )
+            else:
+                # Fallback для заглушек или старых версий — обычный predict без трекинга.
+                results = self._model.predict(
+                    frame,
+                    imgsz=self.config.imgsz,
+                    conf=self.config.conf,
+                    device=self.config.device or "cpu",
+                    verbose=False,
+                )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Ошибка во время инференса YOLO: %s", exc)
+            logger.warning("Ошибка во время инференса/трекинга YOLO: %s", exc)
             return []
 
-        detections: List[Tuple[int, int, int, int, float]] = []
+        detections: List[Tuple[int, int, int, int, float, Optional[int]]] = []
 
         # Разбираем результаты детекции, фильтруем только класс PERSON_CLASS_ID
         for result in results:
             # result.boxes.xyxy: Tensor[N, 4]
             # result.boxes.cls: Tensor[N]
             # result.boxes.conf: Tensor[N]
+            # result.boxes.id: Tensor[N] или None (для трекинга)
             boxes = getattr(result, "boxes", None)
             if boxes is None:
                 continue
@@ -141,11 +155,23 @@ class YOLOPeopleDetector:
             xyxy = getattr(boxes, "xyxy", None)
             classes = getattr(boxes, "cls", None)
             scores = getattr(boxes, "conf", None)
+            track_ids = getattr(boxes, "id", None)
 
             if xyxy is None or classes is None or scores is None:
                 continue
 
-            for box, cls_id, score in zip(xyxy, classes, scores):
+            # Если трекинг не вернул id, будем подставлять None.
+            if track_ids is None:
+                track_ids_iter = [None] * len(xyxy)
+            else:
+                track_ids_iter = track_ids
+
+            for box, cls_id, score, track_id in zip(
+                xyxy,
+                classes,
+                scores,
+                track_ids_iter,
+            ):
                 try:
                     cls_int = int(cls_id)
                 except (TypeError, ValueError):
@@ -161,6 +187,12 @@ class YOLOPeopleDetector:
                 except (TypeError, ValueError):
                     continue
 
-                detections.append((x1, y1, x2, y2, score_float))
+                track_int: Optional[int]
+                try:
+                    track_int = int(track_id) if track_id is not None else None
+                except (TypeError, ValueError):
+                    track_int = None
+
+                detections.append((x1, y1, x2, y2, score_float, track_int))
 
         return detections

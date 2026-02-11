@@ -1,0 +1,13 @@
+---
+description: Run mypy, flake8 and pytest when modifying Python files. Resolve any reported issues.
+globs: **/*.py
+alwaysApply: false
+---
+
+# Python Quality Checks
+
+When editing or creating Python files in this project:
+
+1. **After changes**: Run `mypy src/ tests/`, `flake8 src/ tests/`, and `pytest` to verify quality.
+2. **Fix issues**: Resolve any mypy type errors, flake8 lint violations, or failing tests before considering the task complete.
+3. **Scope**: Run checks on `src/` and `tests/` directories.
