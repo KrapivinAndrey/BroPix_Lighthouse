@@ -349,6 +349,39 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                                     now,
                                 )
 
+                                # #region agent log
+                                try:
+                                    import json as _agent_json  # type: ignore
+                                    import time as _agent_time  # type: ignore
+
+                                    _agent_log_entry = {
+                                        "id": f"log_{int(_agent_time.time() * 1000)}",
+                                        "timestamp": int(_agent_time.time() * 1000),
+                                        "location": "src/camera.py:display_video_stream",
+                                        "message": "speed_computation_debug_window",
+                                        "data": {
+                                            "last_pos": last_pos,
+                                            "current_pos": (cx, cy),
+                                            "last_time": float(last_time_val),
+                                            "current_time": now,
+                                            "px_to_m_scale": "DEFAULT",
+                                            "speed_kmh": speed_kmh,
+                                            "track_id": det_track_id,
+                                        },
+                                        "runId": "pre-fix",
+                                        "hypothesisId": "H1-H4",
+                                    }
+                                    with open(
+                                        r"c:\Users\KrapivinAV-hp\PycharmProjects\LighthouseForCycles\.cursor\debug.log",
+                                        "a",
+                                        encoding="utf-8",
+                                    ) as _agent_f:
+                                        _agent_f.write(_agent_json.dumps(_agent_log_entry, ensure_ascii=False) + "\n")
+                                except OSError:
+                                    # Логи отладки не должны ломать основной поток.
+                                    pass
+                                # #endregion agent log
+
                             # Обновляем трек с последними данными
                             prev_speed = prev.get("speed_kmh")
                             current_speed: float | None = (
@@ -414,7 +447,8 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
                         if label_speed is not None:
-                            label = f"person {score:.2f} | {label_speed:.1f} km/h"
+                            speed_m_s = label_speed / 3.6
+                            label = f"person {score:.2f} | {speed_m_s:.2f} m\\s"
                         else:
                             label = f"person {score:.2f}"
 
