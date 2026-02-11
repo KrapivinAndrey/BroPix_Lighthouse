@@ -211,9 +211,13 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         except Exception:
             config = None
 
+    speed_limit_kmh: float = 8.0
     if config is not None:
         detection_config = config.get("detection", {})
         detection_enabled = bool(detection_config.get("enabled", False))
+        # Порог скорости в км/ч, выше которого рамка считается «красной».
+        # Если в конфиге нет значения, используем безопасное значение по умолчанию.
+        speed_limit_kmh = float(config.get("speed_limit_kmh", 8.0))
 
     if detection_enabled:
         try:
@@ -317,8 +321,6 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         cy = (y1 + y2) / 2.0
 
                         speed_kmh = None
-                        # Порог скорости в км/ч, выше которого рамка считается «красной»
-                        SPEED_LIMIT_KMH = 8.0
 
                         if det_track_id is not None and det_track_id >= 0:
                             prev = tracks.get(det_track_id)
@@ -364,7 +366,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         text_color = (0, 255, 0)
 
                         # Если скорость известна и выше порога — красим в красный.
-                        if label_speed is not None and label_speed > SPEED_LIMIT_KMH:
+                        if label_speed is not None and label_speed > speed_limit_kmh:
                             box_color = (0, 0, 255)
                             text_color = (0, 0, 255)
 

@@ -3,3 +3,6 @@
 opencv-python>=4.8.0
 numpy>=1.24.0
 ultralytics
+# Web backend
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0

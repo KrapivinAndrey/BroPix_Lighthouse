@@ -1,6 +1,6 @@
 {
   "camera": {
-    "index": 0,
+    "index": 1,
     "width": 640,
     "height": 480,
     "fps": 30
@@ -11,5 +11,6 @@
     "conf": 0.5,
     "imgsz": 640,
     "device": "cpu"
-  }
+  },
+  "speed_limit_kmh": 8.0
 }

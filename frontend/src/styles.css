@@ -1,0 +1,218 @@
+:root {
+  --bg-main: #050713;
+  --bg-panel: #0b0f24;
+  --accent-cyan: #00f5ff;
+  --accent-magenta: #ff00ff;
+  --accent-pink: #ff0066;
+  --text-main: #f5f7ff;
+  --text-muted: #8b8fa7;
+  --error: #ff4b81;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top, #181b3a 0, #050713 40%);
+  color: var(--text-main);
+}
+
+body {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.page-root {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px;
+}
+
+.page-shell {
+  width: 100%;
+  max-width: 1200px;
+  min-height: 0;
+  background: linear-gradient(145deg, #050713 0%, #0b0f24 70%);
+  border-radius: 18px;
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.neon-frame {
+  border-radius: 18px;
+  border: 1px solid rgba(0, 245, 255, 0.35);
+  box-shadow:
+    0 0 14px rgba(0, 245, 255, 0.35),
+    0 0 28px rgba(255, 0, 255, 0.25);
+}
+
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.logo-text {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 10px rgba(0, 245, 255, 0.7),
+    0 0 20px rgba(255, 0, 255, 0.6);
+}
+
+.subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.page-main {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.video-section,
+.side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+
+.video-frame {
+  padding: 10px;
+  background: radial-gradient(circle at top, #151a38, #050713);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-element {
+  max-width: 100%;
+  max-height: 480px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 245, 255, 0.5);
+  box-shadow:
+    0 0 18px rgba(0, 245, 255, 0.45),
+    0 0 32px rgba(255, 0, 255, 0.2);
+}
+
+.controls {
+  padding: 14px 16px 16px;
+  background: linear-gradient(160deg, #06091a 0%, #0b1023 70%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.field-input {
+  border-radius: 999px;
+  border: 1px solid rgba(0, 245, 255, 0.5);
+  padding: 6px 10px;
+  background: rgba(3, 5, 18, 0.9);
+  color: var(--text-main);
+  font-size: 14px;
+  outline: none;
+  box-shadow: 0 0 10px rgba(0, 245, 255, 0.35);
+}
+
+.field-input:focus {
+  border-color: var(--accent-magenta);
+  box-shadow:
+    0 0 12px rgba(0, 245, 255, 0.6),
+    0 0 24px rgba(255, 0, 255, 0.55);
+}
+
+.status-text {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.status-error {
+  color: var(--error);
+}
+
+.hint-text {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.lamp-title {
+  margin-top: 4px;
+}
+
+.lamp-container {
+  margin-top: 4px;
+  padding: 16px 16px 14px;
+  background: radial-gradient(circle at top, #150921, #050713);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.lamp {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.lamp-green {
+  background: radial-gradient(circle at 30% 20%, #c9ffe9, #00ff7b);
+  box-shadow:
+    0 0 16px rgba(0, 255, 123, 0.9),
+    0 0 30px rgba(0, 255, 123, 0.75);
+}
+
+.lamp-red {
+  background: radial-gradient(circle at 30% 20%, #ffd6df, #ff0048);
+  box-shadow:
+    0 0 16px rgba(255, 0, 72, 0.95),
+    0 0 32px rgba(255, 0, 72, 0.8);
+}
+
+.lamp-caption {
+  font-size: 14px;
+}
+
+@media (max-width: 900px) {
+  .page-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
