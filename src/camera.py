@@ -330,7 +330,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         cx = (x1 + x2) / 2.0
                         cy = (y1 + y2) / 2.0
 
-                        speed_kmh = None
+                        speed_kmh: float | None = None
                         prev: Dict[str, Any] = {}
 
                         if det_track_id is not None and det_track_id >= 0:
@@ -351,10 +351,13 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
 
                             # Обновляем трек с последними данными
                             prev_speed = prev.get("speed_kmh")
-                            current_speed = speed_kmh if speed_kmh is not None else prev_speed
+                            current_speed: float | None = (
+                                speed_kmh if speed_kmh is not None else prev_speed
+                            )
 
                             is_over_limit_prev = bool(prev.get("is_over_limit", False))
                             last_over_limit_time_prev = prev.get("last_over_limit_time")
+                            last_over_limit_time: float | None
 
                             # Логика задержки красного сигнала:
                             # 1. Если текущая скорость известна и выше порога — сразу считаем, что есть превышение.
@@ -369,10 +372,14 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                                     and now - float(last_over_limit_time_prev) <= red_hold_seconds
                                 ):
                                     is_over_limit = True
-                                    last_over_limit_time = last_over_limit_time_prev
+                                    last_over_limit_time = float(last_over_limit_time_prev)
                                 else:
                                     is_over_limit = False
-                                    last_over_limit_time = last_over_limit_time_prev
+                                    last_over_limit_time = (
+                                        float(last_over_limit_time_prev)
+                                        if isinstance(last_over_limit_time_prev, (int, float))
+                                        else None
+                                    )
 
                             tracks[det_track_id] = {
                                 "last_pos": (cx, cy),

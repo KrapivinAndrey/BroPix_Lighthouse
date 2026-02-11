@@ -19,6 +19,7 @@ def _update_track_state(
     """
     is_over_limit_prev = bool(prev.get("is_over_limit", False))
     last_over_limit_time_prev = prev.get("last_over_limit_time")
+    last_over_limit_time: float | None
 
     if current_speed is not None and current_speed > speed_limit_kmh:
         is_over_limit = True
@@ -30,10 +31,14 @@ def _update_track_state(
             and now - float(last_over_limit_time_prev) <= red_hold_seconds
         ):
             is_over_limit = True
-            last_over_limit_time = last_over_limit_time_prev
+            last_over_limit_time = float(last_over_limit_time_prev)
         else:
             is_over_limit = False
-            last_over_limit_time = last_over_limit_time_prev
+            last_over_limit_time = (
+                float(last_over_limit_time_prev)
+                if isinstance(last_over_limit_time_prev, (int, float))
+                else None
+            )
 
     return {
         "is_over_limit": is_over_limit,
@@ -81,4 +86,3 @@ def test_red_hold_keeps_over_limit_for_some_time() -> None:
         red_hold_seconds=red_hold_seconds,
     )
     assert state["is_over_limit"] is False
-
