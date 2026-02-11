@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.camera import Camera, CameraError, load_config
-from src.speed_utils import compute_speed_kmh
+from src.speed_utils import DEFAULT_PX_TO_M_SCALE, compute_speed_kmh
 
 
 logger = logging.getLogger(__name__)
@@ -203,12 +203,16 @@ def _camera_worker() -> None:
                     frame_idx += 1
                     now = time.time()
 
-                    # Используем актуальное значение draw_boxes из конфига,
-                    # чтобы переключение галочки в веб-интерфейсе применялось без
-                    # перезапуска фонового потока.
+                    # Используем актуальные значения визуализации и масштаба
+                    # из конфига, чтобы переключение галочки и калибровка
+                    # применялись без перезапуска фонового потока.
                     with state.config_lock:
-                        live_detection_cfg = state.config.get("detection", {})
+                        live_config = state.config
+                        live_detection_cfg = live_config.get("detection", {})
                         draw_boxes_live = bool(live_detection_cfg.get("draw_boxes", True))
+                        px_to_m_scale_live = float(
+                            live_config.get("px_to_m_scale", DEFAULT_PX_TO_M_SCALE)
+                        )
 
                     # По умолчанию берём предыдущее состояние лампы.
                     is_exceeded_any = last_is_exceeded_any
@@ -266,7 +270,45 @@ def _camera_worker() -> None:
                                         float(last_time_val),
                                         (cx, cy),
                                         now,
+                                        px_to_m_scale=px_to_m_scale_live,
                                     )
+
+                                    # #region agent log
+                                    try:
+                                        import json as _agent_json  # type: ignore
+                                        import time as _agent_time  # type: ignore
+
+                                        _agent_log_entry = {
+                                            "id": f"log_{int(_agent_time.time() * 1000)}",
+                                            "timestamp": int(_agent_time.time() * 1000),
+                                            "location": "src/web_app.py:_camera_worker",
+                                            "message": "speed_computation",
+                                            "data": {
+                                                "last_pos": last_pos,
+                                                "current_pos": (cx, cy),
+                                                "last_time": float(last_time_val),
+                                                "current_time": now,
+                                                "px_to_m_scale": px_to_m_scale_live,
+                                                "speed_kmh": speed_kmh,
+                                                "speed_limit_kmh": speed_limit_kmh,
+                                                "track_id": det_track_id,
+                                            },
+                                            "runId": "pre-fix",
+                                            "hypothesisId": "H1-H4",
+                                        }
+                                        with open(
+                                            r"c:\Users\KrapivinAV-hp\PycharmProjects\LighthouseForCycles"
+                                            r"\.cursor\debug.log",
+                                            "a",
+                                            encoding="utf-8",
+                                        ) as _agent_f:
+                                            _agent_f.write(
+                                                _agent_json.dumps(_agent_log_entry, ensure_ascii=False) + "\n"
+                                            )
+                                    except OSError:
+                                        # Логи отладки не должны ломать основной поток.
+                                        pass
+                                    # #endregion agent log
 
                                 prev_speed = prev.get("speed_kmh")
                                 current_speed: Optional[float] = (
@@ -331,7 +373,8 @@ def _camera_worker() -> None:
                                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
                                 if label_speed is not None:
-                                    label = f"person {score:.2f} | {label_speed:.1f} km/h"
+                                    speed_m_s = label_speed / 3.6
+                                    label = f"person {score:.2f} | {speed_m_s:.2f} m\\s"
                                 else:
                                     label = f"person {score:.2f}"
 
@@ -449,6 +492,12 @@ def create_app() -> FastAPI:
                     config["red_hold_seconds"] = float(payload["red_hold_seconds"])
                 except (TypeError, ValueError) as exc:
                     raise HTTPException(status_code=400, detail="red_hold_seconds must be a number") from exc
+
+            if "px_to_m_scale" in payload:
+                try:
+                    config["px_to_m_scale"] = float(payload["px_to_m_scale"])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail="px_to_m_scale must be a number") from exc
 
             state.config = config
             _save_config_to_disk(config)

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 const API_BASE = "/api";
 
@@ -78,10 +78,26 @@ function useLamp() {
 export function App() {
   const { config, loading, saving, error, saveConfig } = useConfig();
   const lamp = useLamp();
+  const videoRef = useRef(null);
+  // Таймер для скрытия кружков калибровки после завершения
+  const calibrationHideTimerRef = useRef(null);
+  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrationPoints, setCalibrationPoints] = useState([]);
+  const [calibrationMessage, setCalibrationMessage] = useState("");
 
   const cameraIndex = config?.camera?.index ?? 0;
   const speedLimit = config?.speed_limit_kmh ?? 8.0;
   const drawBoxes = config?.detection?.draw_boxes ?? true;
+  const pxToMScale = config?.px_to_m_scale ?? null;
+
+  // Очистка таймера скрытия кружков при размонтировании компонента
+  useEffect(() => {
+    return () => {
+      if (calibrationHideTimerRef.current) {
+        clearTimeout(calibrationHideTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleCameraChange = (e) => {
     const value = Number(e.target.value);
@@ -100,6 +116,86 @@ export function App() {
     saveConfig({ detection: { draw_boxes: value } });
   };
 
+  const handleStartCalibration = () => {
+    // При новом запуске калибровки сбрасываем таймер скрытия кружков
+    if (calibrationHideTimerRef.current) {
+      clearTimeout(calibrationHideTimerRef.current);
+      calibrationHideTimerRef.current = null;
+    }
+    setIsCalibrating(true);
+    setCalibrationPoints([]);
+    setCalibrationMessage("Кликните по двум точкам на расстоянии 1 метр.");
+  };
+
+  const handleCalibrationClick = (e) => {
+    if (!isCalibrating) return;
+    const img = videoRef.current;
+    if (!img) return;
+
+    const rect = img.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      setCalibrationMessage("Не удалось определить размер изображения.");
+      return;
+    }
+
+    const naturalWidth = img.naturalWidth || config?.camera?.width;
+    const naturalHeight = img.naturalHeight || config?.camera?.height;
+    if (!naturalWidth || !naturalHeight) {
+      setCalibrationMessage("Не удалось определить разрешение кадра камеры.");
+      return;
+    }
+
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    const normX = clickX / rect.width;
+    const normY = clickY / rect.height;
+
+    const newPoints = [...calibrationPoints, { normX, normY }];
+
+    if (newPoints.length < 2) {
+      setCalibrationPoints(newPoints);
+      setCalibrationMessage("Выберите вторую точку на расстоянии 1 метр.");
+      return;
+    }
+
+    const [p1, p2] = newPoints;
+    const x1 = p1.normX * naturalWidth;
+    const y1 = p1.normY * naturalHeight;
+    const x2 = p2.normX * naturalWidth;
+    const y2 = p2.normY * naturalHeight;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const distPx = Math.hypot(dx, dy);
+
+    if (!Number.isFinite(distPx) || distPx <= 0) {
+      setCalibrationMessage("Слишком маленькое расстояние между точками.");
+      setCalibrationPoints([]);
+      setIsCalibrating(false);
+      return;
+    }
+
+    const distanceMeters = 1.0;
+    const scale = distanceMeters / distPx;
+
+    saveConfig({ px_to_m_scale: scale });
+    setCalibrationPoints(newPoints);
+    setIsCalibrating(false);
+    setCalibrationMessage(
+      `Калибровка сохранена: ~${scale.toFixed(4)} м/пикс.`
+    );
+
+    // Оставляем кружки видимыми ещё 2 секунды после калибровки, затем скрываем
+    if (calibrationHideTimerRef.current) {
+      clearTimeout(calibrationHideTimerRef.current);
+    }
+    calibrationHideTimerRef.current = setTimeout(() => {
+      setCalibrationPoints([]);
+      calibrationHideTimerRef.current = null;
+    }, 2000);
+  };
+
   const lampClass = lamp === "red" ? "lamp lamp-red" : "lamp lamp-green";
 
   return (
@@ -114,11 +210,33 @@ export function App() {
           <section className="video-section">
             <div className="section-title">Видеопоток</div>
             <div className="video-frame neon-frame">
-              <img
-                src="/stream"
-                alt="Камера Lighthouse"
-                className="video-element"
-              />
+              <div className="video-inner">
+                <img
+                  ref={videoRef}
+                  src="/stream"
+                  alt="Камера Lighthouse"
+                  className="video-element"
+                />
+                <div
+                  className={
+                    isCalibrating
+                      ? "calibration-overlay calibration-overlay-active"
+                      : "calibration-overlay"
+                  }
+                  onClick={handleCalibrationClick}
+                >
+                  {calibrationPoints.map((p, idx) => (
+                    <div
+                      key={idx}
+                      className="calibration-point"
+                      style={{
+                        left: `${p.normX * 100}%`,
+                        top: `${p.normY * 100}%`
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
 
@@ -162,6 +280,25 @@ export function App() {
                       Показывать рамки вокруг объектов
                     </span>
                   </label>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={handleStartCalibration}
+                    disabled={loading || saving}
+                  >
+                    {isCalibrating ? "Режим калибровки…" : "Калибровка"}
+                  </button>
+
+                  {pxToMScale != null && (
+                    <div className="hint-text">
+                      Текущий масштаб: {pxToMScale.toFixed(4)} м/пикс.
+                    </div>
+                  )}
+
+                  {calibrationMessage && (
+                    <div className="status-text">{calibrationMessage}</div>
+                  )}
 
                   <div className="status-block">
                     {saving && (

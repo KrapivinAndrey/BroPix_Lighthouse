@@ -120,6 +120,35 @@ body {
     0 0 32px rgba(255, 0, 255, 0.2);
 }
 
+.video-inner {
+  position: relative;
+  display: inline-block;
+}
+
+.calibration-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+
+.calibration-overlay-active {
+  background: radial-gradient(circle at top, rgba(21, 26, 56, 0.05), transparent);
+}
+
+.calibration-point {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -5px;
+  border-radius: 50%;
+  border: 2px solid #00f5ff;
+  background: rgba(0, 245, 255, 0.2);
+  box-shadow:
+    0 0 8px rgba(0, 245, 255, 0.9),
+    0 0 16px rgba(255, 0, 255, 0.7);
+}
+
 .controls {
   padding: 14px 16px 16px;
   background: linear-gradient(160deg, #06091a 0%, #0b1023 70%);
@@ -175,6 +204,28 @@ body {
   box-shadow:
     0 0 12px rgba(0, 245, 255, 0.6),
     0 0 24px rgba(255, 0, 255, 0.55);
+}
+
+.primary-button {
+  margin-top: 4px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 0, 255, 0.7);
+  padding: 6px 14px;
+  background: linear-gradient(135deg, #ff0066, #ff00ff);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+  box-shadow:
+    0 0 14px rgba(255, 0, 255, 0.7),
+    0 0 24px rgba(0, 245, 255, 0.6);
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
 }
 
 /* Числовые поля формы настроек (Номер камеры, Ограничение скорости) */
