@@ -128,6 +128,26 @@ body {
   gap: 12px;
 }
 
+.controls .field.field-checkbox {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.controls .field-checkbox-input {
+  margin: 0;
+}
+
+.controls .field.field-checkbox .field-label {
+  text-align: left;
+  white-space: nowrap;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -157,9 +177,28 @@ body {
     0 0 24px rgba(255, 0, 255, 0.55);
 }
 
+/* Числовые поля формы настроек (Номер камеры, Ограничение скорости) */
+.controls input[type="number"].field-input {
+  -moz-appearance: textfield; /* Firefox */
+}
+
+.controls input[type="number"].field-input::-webkit-outer-spin-button,
+.controls input[type="number"].field-input::-webkit-inner-spin-button {
+  -webkit-appearance: none; /* Chrome, Edge, Safari */
+  margin: 0;
+}
+
 .status-text {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.status-block {
+  min-height: 32px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
 }
 
 .status-error {

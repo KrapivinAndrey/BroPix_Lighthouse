@@ -163,14 +163,16 @@ export function App() {
                     </span>
                   </label>
 
-                  {saving && (
-                    <div className="status-text">Сохранение настроек…</div>
-                  )}
-                  {error && (
-                    <div className="status-text status-error">
-                      Ошибка: {error}
-                    </div>
-                  )}
+                  <div className="status-block">
+                    {saving && (
+                      <div className="status-text">Сохранение настроек…</div>
+                    )}
+                    {error && (
+                      <div className="status-text status-error">
+                        Ошибка: {error}
+                      </div>
+                    )}
+                  </div>
                   <div className="hint-text">
                     Смена номера камеры может потребовать перезапуска потока.
                   </div>
