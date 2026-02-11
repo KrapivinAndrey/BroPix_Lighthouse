@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import signal
 import threading
 import time
 from pathlib import Path
@@ -23,6 +25,9 @@ from fastapi.staticfiles import StaticFiles
 
 from src.camera import Camera, CameraError, load_config
 from src.speed_utils import compute_speed_kmh
+
+
+logger = logging.getLogger(__name__)
 
 
 class _AppState:
@@ -46,6 +51,36 @@ class _AppState:
 
 
 state = _AppState()
+
+
+def _handle_termination_signal(signum: int, _frame: Any) -> None:
+    """
+    Обработчик сигналов завершения процесса.
+
+    По Ctrl+C (SIGINT) или аналогичным сигналам сразу ставим флаг остановки,
+    чтобы разорвать бесконечные циклы стрима и фонового потока и не зависать
+    на graceful shutdown uvicorn.
+    """
+    logger.info("Получен сигнал завершения %s, останавливаем фоновые потоки.", signum)
+    state.stop_event.set()
+
+
+def _setup_signal_handlers() -> None:
+    """Настроить обработчики сигналов для корректной остановки по Ctrl+C."""
+    possible_signals = [
+        getattr(signal, "SIGINT", None),
+        getattr(signal, "SIGTERM", None),
+        getattr(signal, "SIGBREAK", None),  # Windows-специфичный сигнал
+    ]
+
+    for sig in possible_signals:
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _handle_termination_signal)
+        except (OSError, ValueError):
+            # Может не сработать внутри потоков или в средах без поддержки сигналов.
+            logger.debug("Не удалось установить обработчик для сигнала %s.", sig)
 
 
 def _load_initial_config() -> None:
@@ -115,6 +150,7 @@ def _camera_worker() -> None:
             fps_val = camera_cfg.get("fps")
 
             detection_enabled = bool(detection_cfg.get("enabled", False))
+            draw_boxes = bool(detection_cfg.get("draw_boxes", True))
 
             # Инициализируем YOLO-детектор, если включён.
             yolo_detector = None
@@ -167,6 +203,13 @@ def _camera_worker() -> None:
 
                     frame_idx += 1
                     now = time.time()
+
+                    # Используем актуальное значение draw_boxes из конфига,
+                    # чтобы переключение галочки в веб-интерфейсе применялось без
+                    # перезапуска фонового потока.
+                    with state.config_lock:
+                        live_detection_cfg = state.config.get("detection", {})
+                        draw_boxes_live = bool(live_detection_cfg.get("draw_boxes", True))
 
                     # По умолчанию берём предыдущее состояние лампы.
                     is_exceeded_any = last_is_exceeded_any
@@ -271,29 +314,30 @@ def _camera_worker() -> None:
                             if is_over_limit:
                                 is_exceeded_any = True
 
-                            # Цвет рамки и текста
-                            box_color = (0, 255, 0)
-                            text_color = (0, 255, 0)
-                            if is_over_limit:
-                                box_color = (0, 0, 255)
-                                text_color = (0, 0, 255)
+                            if draw_boxes_live:
+                                # Цвет рамки и текста
+                                box_color = (0, 255, 0)
+                                text_color = (0, 255, 0)
+                                if is_over_limit:
+                                    box_color = (0, 0, 255)
+                                    text_color = (0, 0, 255)
 
-                            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
 
-                            if label_speed is not None:
-                                label = f"person {score:.2f} | {label_speed:.1f} km/h"
-                            else:
-                                label = f"person {score:.2f}"
+                                if label_speed is not None:
+                                    label = f"person {score:.2f} | {label_speed:.1f} km/h"
+                                else:
+                                    label = f"person {score:.2f}"
 
-                            cv2.putText(
-                                frame,
-                                label,
-                                (x1, max(y1 - 10, 0)),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.6,
-                                text_color,
-                                2,
-                            )
+                                cv2.putText(
+                                    frame,
+                                    label,
+                                    (x1, max(y1 - 10, 0)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    0.6,
+                                    text_color,
+                                    2,
+                                )
 
                         # Обновляем запомненное состояние лампы только после детекции.
                         last_is_exceeded_any = is_exceeded_any
@@ -332,6 +376,9 @@ def _start_worker_if_needed() -> None:
 def create_app() -> FastAPI:
     """Создать и настроить экземпляр FastAPI-приложения."""
     app = FastAPI(title="LighthouseForCycles Web")
+
+    # Настраиваем обработчики сигналов, чтобы по Ctrl+C корректно гасить фоновые потоки.
+    _setup_signal_handlers()
 
     _load_initial_config()
     _start_worker_if_needed()
@@ -376,6 +423,14 @@ def create_app() -> FastAPI:
                     for key in ("index", "width", "height", "fps"):
                         if key in incoming_camera:
                             camera_cfg[key] = incoming_camera[key]
+
+            detection_cfg = config.setdefault("detection", {})
+            if "detection" in payload:
+                incoming_detection = payload["detection"]
+                if isinstance(incoming_detection, dict):
+                    for key in ("enabled", "model_path", "conf", "device", "imgsz", "draw_boxes"):
+                        if key in incoming_detection:
+                            detection_cfg[key] = incoming_detection[key]
 
             if "speed_limit_kmh" in payload:
                 try:

@@ -81,6 +81,7 @@ export function App() {
 
   const cameraIndex = config?.camera?.index ?? 0;
   const speedLimit = config?.speed_limit_kmh ?? 8.0;
+  const drawBoxes = config?.detection?.draw_boxes ?? true;
 
   const handleCameraChange = (e) => {
     const value = Number(e.target.value);
@@ -92,6 +93,11 @@ export function App() {
     const value = Number(e.target.value);
     if (Number.isNaN(value)) return;
     saveConfig({ speed_limit_kmh: value });
+  };
+
+  const handleDrawBoxesChange = (e) => {
+    const value = e.target.checked;
+    saveConfig({ detection: { draw_boxes: value } });
   };
 
   const lampClass = lamp === "red" ? "lamp lamp-red" : "lamp lamp-green";
@@ -143,6 +149,18 @@ export function App() {
                       value={speedLimit}
                       onChange={handleSpeedChange}
                     />
+                  </label>
+
+                  <label className="field field-checkbox">
+                    <input
+                      type="checkbox"
+                      className="field-checkbox-input"
+                      checked={drawBoxes}
+                      onChange={handleDrawBoxesChange}
+                    />
+                    <span className="field-label">
+                      Показывать рамки вокруг объектов
+                    </span>
                   </label>
 
                   {saving && (
