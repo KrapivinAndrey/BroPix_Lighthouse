@@ -24,33 +24,54 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.camera import Camera, CameraError, load_config
+from src.config.service import ConfigService
+from src.lighthouse.implementations import UILighthouseController
+from src.processing.frame_processor import FrameProcessor
 from src.speed_utils import DEFAULT_PX_TO_M_SCALE, compute_speed_kmh
 
 
 logger = logging.getLogger(__name__)
 
 
-class _AppState:
-    """Глобальное состояние для веб-приложения."""
+class AppState:
+    """
+    Состояние веб-приложения с явными зависимостями.
 
-    def __init__(self) -> None:
+    Зависимости передаются через конструктор (dependency injection),
+    что упрощает тестирование и масштабирование.
+    """
+
+    def __init__(
+        self,
+        config_service: ConfigService,
+        lighthouse_controller: UILighthouseController,
+    ) -> None:
+        self.config_service = config_service
+        self.lighthouse_controller = lighthouse_controller
+
         self.frame_lock = threading.Lock()
         self.latest_frame: Optional[np.ndarray] = None
-
-        self.lamp_lock = threading.Lock()
-        self.is_speed_exceeded: bool = False
-
-        self.config_lock = threading.Lock()
-        self.config: Dict[str, Any] = {}
-        self.config_path: Optional[Path] = None
 
         self.worker_thread: Optional[threading.Thread] = None
         self.stop_event = threading.Event()
 
-        self.current_camera_index: Optional[int] = None
+
+# Глобальное состояние для обратной совместимости (будет удалено после полного рефакторинга)
+_state: Optional[AppState] = None
 
 
-state = _AppState()
+def _get_state() -> AppState:
+    """Получить глобальное состояние (временная функция для миграции)."""
+    global _state
+    if _state is None:
+        # Инициализация по умолчанию при первом обращении
+        config_service = ConfigService()
+        lighthouse_controller = UILighthouseController()
+        _state = AppState(
+            config_service=config_service,
+            lighthouse_controller=lighthouse_controller,
+        )
+    return _state
 
 
 def _handle_termination_signal(signum: int, _frame: Any) -> None:
@@ -62,7 +83,7 @@ def _handle_termination_signal(signum: int, _frame: Any) -> None:
     на graceful shutdown uvicorn.
     """
     logger.info("Получен сигнал завершения %s, останавливаем фоновые потоки.", signum)
-    state.stop_event.set()
+    _get_state().stop_event.set()
 
 
 def _setup_signal_handlers() -> None:
@@ -84,44 +105,33 @@ def _setup_signal_handlers() -> None:
 
 
 def _load_initial_config() -> None:
-    """Загрузить конфигурацию с диска в память."""
-    config = load_config()
-    project_root = Path(__file__).parent.parent
-    config_path = project_root / "config.json"
-
-    with state.config_lock:
-        state.config = config
-        state.config_path = config_path
-        camera_cfg = config.get("camera", {})
-        state.current_camera_index = int(camera_cfg.get("index", 0))
+    """Загрузить конфигурацию с диска в память (через ConfigService)."""
+    # ConfigService автоматически загружает конфигурацию при инициализации
+    # Эта функция оставлена для обратной совместимости
+    pass
 
 
 def _save_config_to_disk(config: Dict[str, Any]) -> None:
-    """Сохранить конфигурацию в config.json."""
-    config_path = state.config_path
-    if config_path is None:
-        project_root = Path(__file__).parent.parent
-        config_path = project_root / "config.json"
-
-    with config_path.open("w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+    """Сохранить конфигурацию в config.json (через ConfigService)."""
+    state = _get_state()
+    state.config_service.update_config(config)
+    state.config_service.save_to_disk()
 
 
 def _update_frame(frame: np.ndarray) -> None:
+    state = _get_state()
     with state.frame_lock:
         state.latest_frame = frame.copy()
 
 
 def _update_lamp(is_exceeded: bool) -> None:
-    with state.lamp_lock:
-        state.is_speed_exceeded = is_exceeded
+    state = _get_state()
+    state.lighthouse_controller.set_state(is_exceeded)
 
 
 def _get_current_config() -> Dict[str, Any]:
-    with state.config_lock:
-        # Глубокое копирование без ссылок на исходный словарь.
-        copied: Dict[str, Any] = json.loads(json.dumps(state.config))
-        return copied
+    state = _get_state()
+    return state.config_service.get_config()
 
 
 def _camera_worker() -> None:
@@ -130,6 +140,7 @@ def _camera_worker() -> None:
 
     Для простоты дублирует часть логики display_video_stream, но без окон OpenCV.
     """
+    state = _get_state()
     try:
         while not state.stop_event.is_set():
             config = _get_current_config()
@@ -178,16 +189,15 @@ def _camera_worker() -> None:
                 time.sleep(1.0)
                 continue
 
-            # Хранилище треков:
-            # track_id -> {
-            #   "last_pos": (cx, cy),
-            #   "last_time": float,
-            #   "speed_kmh": Optional[float],
-            #   "is_over_limit": bool,
-            #   "last_over_limit_time": Optional[float],
-            # }
-            tracks: Dict[int, Dict[str, Any]] = {}
-            track_ttl_seconds = 2.0
+            # Единый обработчик детекций и скоростей
+            px_to_m_scale = float(config.get("px_to_m_scale", DEFAULT_PX_TO_M_SCALE))
+            frame_processor = FrameProcessor(
+                speed_limit_kmh=speed_limit_kmh,
+                red_hold_seconds=red_hold_seconds,
+                px_to_m_scale=px_to_m_scale,
+                speed_func=compute_speed_kmh,
+            )
+
             frame_idx = 0
 
             # Последнее состояние «превышения» для лампы, чтобы не дёргать
@@ -206,13 +216,13 @@ def _camera_worker() -> None:
                     # Используем актуальные значения визуализации и масштаба
                     # из конфига, чтобы переключение галочки и калибровка
                     # применялись без перезапуска фонового потока.
-                    with state.config_lock:
-                        live_config = state.config
-                        live_detection_cfg = live_config.get("detection", {})
-                        draw_boxes_live = bool(live_detection_cfg.get("draw_boxes", True))
-                        px_to_m_scale_live = float(
-                            live_config.get("px_to_m_scale", DEFAULT_PX_TO_M_SCALE)
-                        )
+                    live_config = state.config_service.get_config()
+                    live_detection_cfg = live_config.get("detection", {})
+                    draw_boxes_live = bool(live_detection_cfg.get("draw_boxes", True))
+                    px_to_m_scale_live = state.config_service.get_px_to_m_scale()
+                    # Обновляем масштаб в процессоре, если он изменился
+                    if px_to_m_scale_live != frame_processor._px_to_m_scale:
+                        frame_processor._px_to_m_scale = px_to_m_scale_live
 
                     # По умолчанию берём предыдущее состояние лампы.
                     is_exceeded_any = last_is_exceeded_any
@@ -225,148 +235,33 @@ def _camera_worker() -> None:
                         and frame_idx % detection_frame_stride == 0
                     ):
                         try:
-                            detections = yolo_detector.detect(frame)
+                            raw_detections = yolo_detector.detect(frame)
                         except Exception:  # noqa: BLE001
-                            detections = []
+                            raw_detections = []
                             detection_enabled = False
 
-                        # Очистка устаревших треков
-                        if frame_idx % 30 == 0:
-                            expired_ids = []
-                            for track_id, data in tracks.items():
-                                last_time_val = data.get("last_time")
-                                if isinstance(last_time_val, (int, float)) and now - last_time_val > track_ttl_seconds:
-                                    expired_ids.append(track_id)
-                            for track_id in expired_ids:
-                                tracks.pop(track_id, None)
+                        # Обрабатываем детекции через единый процессор
+                        processed = frame_processor.process(
+                            frame=frame,
+                            detections=raw_detections,
+                            now=now,
+                        )
 
-                        for det in detections:
-                            det_track_id: Optional[int]
-                            if len(det) == 5:
-                                x1, y1, x2, y2, score = det
-                                det_track_id = None
-                            elif len(det) == 6:
-                                x1, y1, x2, y2, score, det_track_id = det
-                            else:
-                                continue
+                        # Обновляем состояние лампы на основе результата обработки
+                        if processed.any_speed_exceeded:
+                            is_exceeded_any = True
 
-                            cx = (x1 + x2) / 2.0
-                            cy = (y1 + y2) / 2.0
+                        # Отрисовка боксов (если включена)
+                        if draw_boxes_live:
+                            for det in processed.detections:
+                                x1, y1, x2, y2 = det.bbox
+                                score = det.score
+                                label_speed = det.speed_kmh
 
-                            speed_kmh: Optional[float] = None
-                            prev: Dict[str, Any] = {}
-
-                            if det_track_id is not None and det_track_id >= 0:
-                                prev = tracks.get(det_track_id, {})
-                                last_pos = prev.get("last_pos")
-                                last_time_val = prev.get("last_time")
-                                if (
-                                    isinstance(last_pos, tuple)
-                                    and len(last_pos) == 2
-                                    and isinstance(last_time_val, (int, float))
-                                ):
-                                    speed_kmh = compute_speed_kmh(
-                                        last_pos,
-                                        float(last_time_val),
-                                        (cx, cy),
-                                        now,
-                                        px_to_m_scale=px_to_m_scale_live,
-                                    )
-
-                                    # #region agent log
-                                    try:
-                                        import json as _agent_json  # type: ignore
-                                        import time as _agent_time  # type: ignore
-
-                                        _agent_log_entry = {
-                                            "id": f"log_{int(_agent_time.time() * 1000)}",
-                                            "timestamp": int(_agent_time.time() * 1000),
-                                            "location": "src/web_app.py:_camera_worker",
-                                            "message": "speed_computation",
-                                            "data": {
-                                                "last_pos": last_pos,
-                                                "current_pos": (cx, cy),
-                                                "last_time": float(last_time_val),
-                                                "current_time": now,
-                                                "px_to_m_scale": px_to_m_scale_live,
-                                                "speed_kmh": speed_kmh,
-                                                "speed_limit_kmh": speed_limit_kmh,
-                                                "track_id": det_track_id,
-                                            },
-                                            "runId": "pre-fix",
-                                            "hypothesisId": "H1-H4",
-                                        }
-                                        with open(
-                                            r"c:\Users\KrapivinAV-hp\PycharmProjects\LighthouseForCycles"
-                                            r"\.cursor\debug.log",
-                                            "a",
-                                            encoding="utf-8",
-                                        ) as _agent_f:
-                                            _agent_f.write(
-                                                _agent_json.dumps(_agent_log_entry, ensure_ascii=False) + "\n"
-                                            )
-                                    except OSError:
-                                        # Логи отладки не должны ломать основной поток.
-                                        pass
-                                    # #endregion agent log
-
-                                prev_speed = prev.get("speed_kmh")
-                                current_speed: Optional[float] = (
-                                    speed_kmh if speed_kmh is not None else prev_speed
-                                )
-
-                                is_over_limit_prev = bool(prev.get("is_over_limit", False))
-                                last_over_limit_time_prev = prev.get("last_over_limit_time")
-                                last_over_limit_time: Optional[float]
-
-                                if current_speed is not None and current_speed > speed_limit_kmh:
-                                    is_over_limit = True
-                                    last_over_limit_time = now
-                                else:
-                                    if (
-                                        is_over_limit_prev
-                                        and isinstance(last_over_limit_time_prev, (int, float))
-                                        and now - float(last_over_limit_time_prev) <= red_hold_seconds
-                                    ):
-                                        is_over_limit = True
-                                        last_over_limit_time = float(last_over_limit_time_prev)
-                                    else:
-                                        is_over_limit = False
-                                        last_over_limit_time = (
-                                            float(last_over_limit_time_prev)
-                                            if isinstance(last_over_limit_time_prev, (int, float))
-                                            else None
-                                        )
-
-                                tracks[det_track_id] = {
-                                    "last_pos": (cx, cy),
-                                    "last_time": now,
-                                    "speed_kmh": current_speed,
-                                    "is_over_limit": is_over_limit,
-                                    "last_over_limit_time": last_over_limit_time,
-                                }
-                            else:
-                                det_track_id = None
-                                current_speed = None
-                                is_over_limit = False
-
-                            if det_track_id is not None:
-                                track_data = tracks.get(det_track_id, {})
-                                label_speed = track_data.get("speed_kmh")
-                                is_over_limit = bool(track_data.get("is_over_limit", False))
-                            else:
-                                label_speed = None
-
-                            # Если есть хотя бы один трек с превышением (с учётом задержки) —
-                            # считаем, что маяк должен быть красным.
-                            if is_over_limit:
-                                is_exceeded_any = True
-
-                            if draw_boxes_live:
                                 # Цвет рамки и текста
                                 box_color = (0, 255, 0)
                                 text_color = (0, 255, 0)
-                                if is_over_limit:
+                                if det.is_over_limit:
                                     box_color = (0, 0, 255)
                                     text_color = (0, 0, 255)
 
@@ -397,8 +292,7 @@ def _camera_worker() -> None:
                     time.sleep(0.001)
 
                     # Проверяем, не поменялся ли номер камеры в конфиге.
-                    with state.config_lock:
-                        new_index = int(state.config.get("camera", {}).get("index", camera_index))
+                    new_index = int(state.config_service.get_camera_config().get("index", camera_index))
                     if new_index != camera_index:
                         break
 
@@ -413,6 +307,7 @@ def _camera_worker() -> None:
 
 
 def _start_worker_if_needed() -> None:
+    state = _get_state()
     if state.worker_thread is not None and state.worker_thread.is_alive():
         return
 
@@ -429,6 +324,15 @@ def create_app() -> FastAPI:
     # Настраиваем обработчики сигналов, чтобы по Ctrl+C корректно гасить фоновые потоки.
     _setup_signal_handlers()
 
+    # Инициализируем состояние приложения с зависимостями
+    global _state
+    if _state is None:
+        config_service = ConfigService()
+        lighthouse_controller = UILighthouseController()
+        _state = AppState(
+            config_service=config_service,
+            lighthouse_controller=lighthouse_controller,
+        )
     _load_initial_config()
     _start_worker_if_needed()
 
@@ -462,45 +366,12 @@ def create_app() -> FastAPI:
 
     @app.patch("/api/config")
     async def patch_config(payload: Dict[str, Any]) -> Dict[str, Any]:
-        with state.config_lock:
-            config = state.config
-
-            camera_cfg = config.setdefault("camera", {})
-            if "camera" in payload:
-                incoming_camera = payload["camera"]
-                if isinstance(incoming_camera, dict):
-                    for key in ("index", "width", "height", "fps"):
-                        if key in incoming_camera:
-                            camera_cfg[key] = incoming_camera[key]
-
-            detection_cfg = config.setdefault("detection", {})
-            if "detection" in payload:
-                incoming_detection = payload["detection"]
-                if isinstance(incoming_detection, dict):
-                    for key in ("enabled", "model_path", "conf", "device", "imgsz", "draw_boxes"):
-                        if key in incoming_detection:
-                            detection_cfg[key] = incoming_detection[key]
-
-            if "speed_limit_kmh" in payload:
-                try:
-                    config["speed_limit_kmh"] = float(payload["speed_limit_kmh"])
-                except (TypeError, ValueError) as exc:
-                    raise HTTPException(status_code=400, detail="speed_limit_kmh must be a number") from exc
-
-            if "red_hold_seconds" in payload:
-                try:
-                    config["red_hold_seconds"] = float(payload["red_hold_seconds"])
-                except (TypeError, ValueError) as exc:
-                    raise HTTPException(status_code=400, detail="red_hold_seconds must be a number") from exc
-
-            if "px_to_m_scale" in payload:
-                try:
-                    config["px_to_m_scale"] = float(payload["px_to_m_scale"])
-                except (TypeError, ValueError) as exc:
-                    raise HTTPException(status_code=400, detail="px_to_m_scale must be a number") from exc
-
-            state.config = config
-            _save_config_to_disk(config)
+        state = _get_state()
+        try:
+            state.config_service.update_config(payload)
+            state.config_service.save_to_disk()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         return _get_current_config()
 
@@ -511,6 +382,7 @@ def create_app() -> FastAPI:
         return {"lamp": lamp}
 
     def frame_generator() -> Iterator[bytes]:
+        state = _get_state()
         boundary = b"--frame"
         while True:
             if state.stop_event.is_set():
@@ -545,10 +417,12 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
+        state = _get_state()
         state.stop_event.set()
         worker = state.worker_thread
         if worker is not None:
             worker.join(timeout=5.0)
+        state.lighthouse_controller.cleanup()
 
     return app
 
