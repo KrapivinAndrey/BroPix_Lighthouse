@@ -67,8 +67,8 @@ class DataStorageService:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    INSERT INTO speed_exceedance_events 
-                    (timestamp, track_id, speed_kmh, speed_limit_kmh, 
+                    INSERT INTO speed_exceedance_events
+                    (timestamp, track_id, speed_kmh, speed_limit_kmh,
                      bbox_x1, bbox_y1, bbox_x2, bbox_y2, detection_score)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -226,8 +226,8 @@ class DataStorageService:
                 # Количество уникальных объектов
                 cursor.execute(
                     f"""
-                    SELECT COUNT(DISTINCT track_id) 
-                    FROM speed_exceedance_events 
+                    SELECT COUNT(DISTINCT track_id)
+                    FROM speed_exceedance_events
                     {where_clause} AND track_id IS NOT NULL
                     """,
                     params,
@@ -238,7 +238,7 @@ class DataStorageService:
                 cursor.execute(
                     f"""
                     SELECT AVG(speed_kmh), MAX(speed_kmh)
-                    FROM speed_exceedance_events 
+                    FROM speed_exceedance_events
                     {where_clause}
                     """,
                     params,
@@ -251,7 +251,7 @@ class DataStorageService:
                 cursor.execute(
                     f"""
                     SELECT CAST((timestamp % 86400) / 3600 AS INTEGER) as hour, COUNT(*)
-                    FROM speed_exceedance_events 
+                    FROM speed_exceedance_events
                     {where_clause}
                     GROUP BY hour
                     ORDER BY hour

@@ -225,4 +225,3 @@ class FrameProcessor:
             self._lighthouse_controller.set_state(any_speed_exceeded)
 
         return result
-

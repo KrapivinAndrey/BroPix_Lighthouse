@@ -66,4 +66,3 @@ class SpeedLimitChecker:
             is_over_limit=is_over_limit,
             last_over_limit_time=last_over_limit_time,
         )
-

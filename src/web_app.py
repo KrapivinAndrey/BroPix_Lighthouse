@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import signal
 import threading
@@ -23,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.camera import Camera, CameraError, load_config
+from src.camera import Camera, CameraError
 from src.config.service import ConfigService
 from src.lighthouse.implementations import UILighthouseController
 from src.processing.frame_processor import FrameProcessor

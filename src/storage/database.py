@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
-
 import logging
 
 logger = logging.getLogger(__name__)
@@ -50,7 +48,7 @@ def init_database(db_path: Path) -> None:
         # Создаем индекс по timestamp для быстрого поиска по времени
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_timestamp 
+            CREATE INDEX IF NOT EXISTS idx_timestamp
             ON speed_exceedance_events(timestamp)
             """
         )
@@ -58,7 +56,7 @@ def init_database(db_path: Path) -> None:
         # Создаем индекс по track_id для группировки событий по объектам
         cursor.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_track_id 
+            CREATE INDEX IF NOT EXISTS idx_track_id
             ON speed_exceedance_events(track_id)
             """
         )

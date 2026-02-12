@@ -4,9 +4,7 @@
 
 import time
 
-import pytest
-
-from src.processing.speed_limit_checker import SpeedLimitChecker, SpeedLimitState
+from src.processing.speed_limit_checker import SpeedLimitChecker
 
 
 def test_speed_limit_checker_init() -> None:

@@ -4,9 +4,7 @@
 
 import time
 
-import pytest
-
-from src.processing.track_manager import TrackData, TrackManager
+from src.processing.track_manager import TrackManager
 
 
 def test_track_manager_init() -> None:
@@ -63,8 +61,14 @@ def test_track_manager_cleanup_expired() -> None:
     manager = TrackManager(ttl_seconds=1.0)
     t0 = time.time()
 
-    manager.upsert(1, last_pos=(0, 0), last_time=t0, speed_kmh=None, is_over_limit=False, last_over_limit_time=None)
-    manager.upsert(2, last_pos=(0, 0), last_time=t0 + 0.5, speed_kmh=None, is_over_limit=False, last_over_limit_time=None)
+    manager.upsert(
+        1, last_pos=(0, 0), last_time=t0, speed_kmh=None,
+        is_over_limit=False, last_over_limit_time=None,
+    )
+    manager.upsert(
+        2, last_pos=(0, 0), last_time=t0 + 0.5, speed_kmh=None,
+        is_over_limit=False, last_over_limit_time=None,
+    )
 
     assert 1 in manager.tracks
     assert 2 in manager.tracks

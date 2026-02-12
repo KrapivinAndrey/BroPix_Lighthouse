@@ -63,4 +63,3 @@ class TrackManager:
 
         for track_id in expired:
             self._tracks.pop(track_id, None)
-

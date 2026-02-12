@@ -6,11 +6,8 @@ import time
 from typing import List, Optional, Tuple
 
 import numpy as np
-import pytest
 
-from src.processing.frame_processor import FrameProcessor, ProcessedDetection
-from src.processing.speed_limit_checker import SpeedLimitState
-from src.processing.track_manager import TrackData, TrackManager
+from src.processing.frame_processor import FrameProcessor
 
 
 def test_frame_processor_init() -> None:
