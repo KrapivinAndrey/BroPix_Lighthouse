@@ -232,7 +232,8 @@ def _camera_worker() -> None:
                     if px_to_m_scale_live != frame_processor._px_to_m_scale:
                         frame_processor._px_to_m_scale = px_to_m_scale_live
 
-                    # По умолчанию берём предыдущее состояние лампы.
+                    # По умолчанию берём предыдущее состояние лампы, чтобы
+                    # между детекциями сохранять последнюю индикацию.
                     is_exceeded_any = last_is_exceeded_any
 
                     # Детекцию выполняем не на каждом кадре, а с заданным шагом,
@@ -255,9 +256,10 @@ def _camera_worker() -> None:
                             now=now,
                         )
 
-                        # Обновляем состояние лампы на основе результата обработки
-                        if processed.any_speed_exceeded:
-                            is_exceeded_any = True
+                        # Обновляем состояние лампы на основе результата обработки:
+                        # теперь она напрямую следует за итоговым флагом any_speed_exceeded,
+                        # в котором уже учтена логика red-hold на уровне треков.
+                        is_exceeded_any = processed.any_speed_exceeded
 
                         # Отрисовка боксов (если включена)
                         if draw_boxes_live:
