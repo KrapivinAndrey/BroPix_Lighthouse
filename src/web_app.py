@@ -377,8 +377,9 @@ def create_app() -> FastAPI:
 
     @app.get("/api/lamp")
     async def get_lamp_state() -> Dict[str, str]:
-        with state.lamp_lock:
-            lamp = "red" if state.is_speed_exceeded else "green"
+        state = _get_state()
+        is_exceeded = state.lighthouse_controller.get_state()
+        lamp = "red" if is_exceeded else "green"
         return {"lamp": lamp}
 
     def frame_generator() -> Iterator[bytes]:
