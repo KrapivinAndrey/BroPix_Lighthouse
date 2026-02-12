@@ -28,6 +28,7 @@ from src.config.service import ConfigService
 from src.lighthouse.implementations import UILighthouseController
 from src.processing.frame_processor import FrameProcessor
 from src.speed_utils import DEFAULT_PX_TO_M_SCALE, compute_speed_kmh
+from src.storage.service import DataStorageService
 
 
 logger = logging.getLogger(__name__)
@@ -45,9 +46,11 @@ class AppState:
         self,
         config_service: ConfigService,
         lighthouse_controller: UILighthouseController,
+        data_storage: Optional[DataStorageService] = None,
     ) -> None:
         self.config_service = config_service
         self.lighthouse_controller = lighthouse_controller
+        self.data_storage = data_storage
 
         self.frame_lock = threading.Lock()
         self.latest_frame: Optional[np.ndarray] = None
@@ -191,11 +194,16 @@ def _camera_worker() -> None:
 
             # Единый обработчик детекций и скоростей
             px_to_m_scale = float(config.get("px_to_m_scale", DEFAULT_PX_TO_M_SCALE))
+            # Используем lighthouse_controller и data_storage из глобального состояния
+            lighthouse_ctrl = state.lighthouse_controller
+            data_storage = getattr(state, "data_storage", None)
             frame_processor = FrameProcessor(
                 speed_limit_kmh=speed_limit_kmh,
                 red_hold_seconds=red_hold_seconds,
                 px_to_m_scale=px_to_m_scale,
                 speed_func=compute_speed_kmh,
+                lighthouse_controller=lighthouse_ctrl,
+                data_storage=data_storage,
             )
 
             frame_idx = 0
@@ -329,9 +337,11 @@ def create_app() -> FastAPI:
     if _state is None:
         config_service = ConfigService()
         lighthouse_controller = UILighthouseController()
+        data_storage = DataStorageService()
         _state = AppState(
             config_service=config_service,
             lighthouse_controller=lighthouse_controller,
+            data_storage=data_storage,
         )
     _load_initial_config()
     _start_worker_if_needed()
@@ -381,6 +391,99 @@ def create_app() -> FastAPI:
         is_exceeded = state.lighthouse_controller.get_state()
         lamp = "red" if is_exceeded else "green"
         return {"lamp": lamp}
+
+    @app.get("/api/events")
+    async def get_events(
+        limit: int = 100,
+        offset: int = 0,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Получить список событий превышения скорости.
+
+        Args:
+            limit: Максимальное количество записей (по умолчанию 100)
+            offset: Смещение для пагинации
+            start_time: Начало периода (Unix timestamp, опционально)
+            end_time: Конец периода (Unix timestamp, опционально)
+
+        Returns:
+            Словарь с событиями и метаданными пагинации
+        """
+        state = _get_state()
+        if state.data_storage is None:
+            raise HTTPException(status_code=503, detail="Data storage не инициализирован")
+
+        events = state.data_storage.get_events(
+            limit=limit, offset=offset, start_time=start_time, end_time=end_time
+        )
+        total = state.data_storage.get_total_events_count(
+            start_time=start_time, end_time=end_time
+        )
+
+        return {
+            "events": [event.to_dict() for event in events],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @app.get("/api/statistics")
+    async def get_statistics(
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Получить статистику по событиям превышения скорости.
+
+        Args:
+            start_time: Начало периода (Unix timestamp, опционально)
+            end_time: Конец периода (Unix timestamp, опционально, по умолчанию текущее время)
+
+        Returns:
+            Словарь со статистикой
+        """
+        state = _get_state()
+        if state.data_storage is None:
+            raise HTTPException(status_code=503, detail="Data storage не инициализирован")
+
+        stats = state.data_storage.get_statistics(start_time=start_time, end_time=end_time)
+        return stats
+
+    @app.get("/api/export/json")
+    async def export_json(
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+    ) -> StreamingResponse:
+        """
+        Экспортировать события превышения скорости в JSON.
+
+        Args:
+            start_time: Начало периода (Unix timestamp, опционально)
+            end_time: Конец периода (Unix timestamp, опционально)
+
+        Returns:
+            JSON файл с событиями
+        """
+        state = _get_state()
+        if state.data_storage is None:
+            raise HTTPException(status_code=503, detail="Data storage не инициализирован")
+
+        json_data = state.data_storage.export_to_json(
+            start_time=start_time, end_time=end_time
+        )
+
+        def generate() -> Iterator[bytes]:
+            yield json_data.encode("utf-8")
+
+        return StreamingResponse(
+            generate(),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": 'attachment; filename="lighthouse_events.json"'
+            },
+        )
 
     def frame_generator() -> Iterator[bytes]:
         state = _get_state()

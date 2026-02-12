@@ -22,6 +22,14 @@ except ImportError:
     # Для обратной совместимости, если модуль lighthouse ещё не создан
     LighthouseController = None  # type: ignore
 
+try:
+    from src.storage.models import SpeedExceedanceEvent
+    from src.storage.service import DataStorageService
+except ImportError:
+    # Для обратной совместимости, если модуль storage ещё не создан
+    SpeedExceedanceEvent = None  # type: ignore
+    DataStorageService = None  # type: ignore
+
 
 Detection = Tuple[int, int, int, int, float, Optional[int]]
 
@@ -71,6 +79,7 @@ class FrameProcessor:
         min_distance_px: float = 1.0,
         speed_func: Callable[..., Optional[float]] = compute_speed_kmh,
         lighthouse_controller: Optional[LighthouseController] = None,
+        data_storage: Optional[DataStorageService] = None,
     ) -> None:
         self._speed_limit_kmh = float(speed_limit_kmh)
         self._red_hold_seconds = float(red_hold_seconds)
@@ -85,6 +94,8 @@ class FrameProcessor:
         # lighthouse_controller может быть None, если модуль lighthouse не импортирован
         # или если контроллер не передан явно
         self._lighthouse_controller: Optional[LighthouseController] = lighthouse_controller
+        # data_storage для записи событий превышения скорости
+        self._data_storage: Optional[DataStorageService] = data_storage
 
     @property
     def track_manager(self) -> TrackManager:
@@ -164,6 +175,33 @@ class FrameProcessor:
                 is_over_limit = state.is_over_limit
                 if is_over_limit:
                     any_speed_exceeded = True
+
+                    # Записываем событие превышения скорости при переходе состояния
+                    # (только если трек перешел из False в True)
+                    if (
+                        self._data_storage is not None
+                        and SpeedExceedanceEvent is not None
+                        and not prev_is_over_limit
+                        and is_over_limit
+                    ):
+                        try:
+                            # Создаем событие для записи в БД
+                            event = SpeedExceedanceEvent(
+                                id=0,  # Будет присвоен БД
+                                timestamp=now,
+                                track_id=track_id,
+                                speed_kmh=current_speed if current_speed is not None else 0.0,
+                                speed_limit_kmh=self._speed_limit_kmh,
+                                bbox=(x1, y1, x2, y2),
+                                detection_score=score,
+                            )
+                            self._data_storage.record_speed_exceedance(event)
+                        except Exception as e:
+                            # Логируем ошибку, но не прерываем обработку кадра
+                            import logging
+
+                            logger = logging.getLogger(__name__)
+                            logger.warning(f"Не удалось записать событие превышения скорости: {e}")
 
             processed.append(
                 ProcessedDetection(

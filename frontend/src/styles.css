@@ -300,9 +300,154 @@ body {
   font-size: 14px;
 }
 
+/* Стили для страницы статистики */
+.statistics-section,
+.events-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.statistics-grid {
+  padding: 16px;
+  background: linear-gradient(160deg, #06091a 0%, #0b1023 70%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 8px rgba(0, 245, 255, 0.6);
+}
+
+.events-table-container {
+  padding: 16px;
+  background: linear-gradient(160deg, #06091a 0%, #0b1023 70%);
+  overflow-x: auto;
+}
+
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.events-table thead {
+  border-bottom: 1px solid rgba(0, 245, 255, 0.3);
+}
+
+.events-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.events-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 245, 255, 0.1);
+}
+
+.events-table tbody tr:hover {
+  background: rgba(0, 245, 255, 0.05);
+}
+
+.exceedance-positive {
+  color: var(--accent-pink);
+  font-weight: 600;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(0, 245, 255, 0.2);
+}
+
+.pagination-button {
+  border-radius: 999px;
+  border: 1px solid rgba(0, 245, 255, 0.5);
+  padding: 6px 12px;
+  background: rgba(3, 5, 18, 0.9);
+  color: var(--text-main);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+
+.pagination-button:hover:not(:disabled) {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 10px rgba(0, 245, 255, 0.4);
+}
+
+.pagination-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pagination-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.back-button,
+.nav-button {
+  border-radius: 999px;
+  border: 1px solid rgba(0, 245, 255, 0.5);
+  padding: 6px 14px;
+  background: rgba(3, 5, 18, 0.9);
+  color: var(--text-main);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.back-button:hover,
+.nav-button:hover {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 10px rgba(0, 245, 255, 0.4);
+}
+
 @media (max-width: 900px) {
   .page-main {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .statistics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .events-table {
+    font-size: 11px;
+  }
+
+  .events-table th,
+  .events-table td {
+    padding: 8px;
   }
 }
 
