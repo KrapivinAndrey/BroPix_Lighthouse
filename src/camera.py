@@ -14,7 +14,8 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
-from src.speed_utils import compute_speed_kmh
+from src.processing.frame_processor import FrameProcessor
+from src.speed_utils import compute_speed_kmh  # re-exported for backward-compatible tests
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -213,6 +214,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
 
     speed_limit_kmh: float = 8.0
     red_hold_seconds: float = 2.0
+    px_to_m_scale: float = 0.05
     if config is not None:
         detection_config = config.get("detection", {})
         detection_enabled = bool(detection_config.get("enabled", False))
@@ -222,6 +224,8 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         # Время (в секундах), в течение которого рамка остаётся красной
         # после того, как скорость опустилась ниже порога.
         red_hold_seconds = float(config.get("red_hold_seconds", 2.0))
+        # Масштаб пикселей в метры используется теперь и в debug-режиме.
+        px_to_m_scale = float(config.get("px_to_m_scale", 0.05))
 
     if detection_enabled:
         try:
@@ -262,16 +266,15 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
         # Счётчик кадров видеопотока
         frame_idx = 0
 
-        # Хранилище треков для расчёта скорости:
-        # track_id -> {
-        #   "last_pos": (cx, cy),
-        #   "last_time": float,
-        #   "speed_kmh": Optional[float],
-        #   "is_over_limit": bool,
-        #   "last_over_limit_time": Optional[float],
-        # }
-        tracks: Dict[int, Dict[str, Any]] = {}
-        track_ttl_seconds = 2.0
+        # Единый обработчик детекций и скоростей.
+        # В качестве функции расчёта скорости передаём compute_speed_kmh из этого модуля,
+        # чтобы тесты могли его подменять через monkeypatch.
+        frame_processor = FrameProcessor(
+            speed_limit_kmh=speed_limit_kmh,
+            red_hold_seconds=red_hold_seconds,
+            px_to_m_scale=px_to_m_scale,
+            speed_func=compute_speed_kmh,
+        )
 
         logger.info("Starting video stream. Press ESC or Q to exit.")
 
@@ -296,143 +299,23 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
             # Детекция людей с помощью YOLO (если включена и доступна)
             if detection_enabled and yolo_detector is not None:
                 try:
-                    detections = yolo_detector.detect(frame)
+                    raw_detections = yolo_detector.detect(frame)
                 except Exception as e:  # noqa: BLE001
                     logger.warning("Ошибка во время детекции людей: %s. Детекция будет отключена.", e)
                     detection_enabled = False
-                    detections = []
                 else:
                     now = time.time()
 
-                    # Периодическая очистка устаревших треков
-                    if frame_idx % 30 == 0:
-                        expired_ids = []
-                        for track_id, data in tracks.items():
-                            last_time_val = data.get("last_time")
-                            if isinstance(last_time_val, (int, float)) and now - last_time_val > track_ttl_seconds:
-                                expired_ids.append(track_id)
-                        for track_id in expired_ids:
-                            tracks.pop(track_id, None)
+                    processed = frame_processor.process(
+                        frame=frame,
+                        detections=raw_detections,
+                        now=now,
+                    )
 
-                    # Рисуем рамки только вокруг людей и рассчитываем скорость по трек-идентификатору.
-                    # Поддерживаем оба формата детекций:
-                    # (x1, y1, x2, y2, score) и (x1, y1, x2, y2, score, track_id).
-                    for det in detections:
-                        det_track_id: Optional[int]
-                        if len(det) == 5:
-                            x1, y1, x2, y2, score = det
-                            det_track_id = None
-                        elif len(det) == 6:
-                            x1, y1, x2, y2, score, det_track_id = det
-                        else:
-                            # Неизвестный формат — пропускаем.
-                            continue
-                        cx = (x1 + x2) / 2.0
-                        cy = (y1 + y2) / 2.0
-
-                        speed_kmh: float | None = None
-                        prev: Dict[str, Any] = {}
-
-                        if det_track_id is not None and det_track_id >= 0:
-                            prev = tracks.get(det_track_id, {})
-                            last_pos = prev.get("last_pos")
-                            last_time_val = prev.get("last_time")
-                            if (
-                                isinstance(last_pos, tuple)
-                                and len(last_pos) == 2
-                                and isinstance(last_time_val, (int, float))
-                            ):
-                                speed_kmh = compute_speed_kmh(
-                                    last_pos,
-                                    float(last_time_val),
-                                    (cx, cy),
-                                    now,
-                                )
-
-                                # #region agent log
-                                try:
-                                    import json as _agent_json  # type: ignore
-                                    import time as _agent_time  # type: ignore
-
-                                    _agent_log_entry = {
-                                        "id": f"log_{int(_agent_time.time() * 1000)}",
-                                        "timestamp": int(_agent_time.time() * 1000),
-                                        "location": "src/camera.py:display_video_stream",
-                                        "message": "speed_computation_debug_window",
-                                        "data": {
-                                            "last_pos": last_pos,
-                                            "current_pos": (cx, cy),
-                                            "last_time": float(last_time_val),
-                                            "current_time": now,
-                                            "px_to_m_scale": "DEFAULT",
-                                            "speed_kmh": speed_kmh,
-                                            "track_id": det_track_id,
-                                        },
-                                        "runId": "pre-fix",
-                                        "hypothesisId": "H1-H4",
-                                    }
-                                    with open(
-                                        r"c:\Users\KrapivinAV-hp\PycharmProjects\LighthouseForCycles\.cursor\debug.log",
-                                        "a",
-                                        encoding="utf-8",
-                                    ) as _agent_f:
-                                        _agent_f.write(_agent_json.dumps(_agent_log_entry, ensure_ascii=False) + "\n")
-                                except OSError:
-                                    # Логи отладки не должны ломать основной поток.
-                                    pass
-                                # #endregion agent log
-
-                            # Обновляем трек с последними данными
-                            prev_speed = prev.get("speed_kmh")
-                            current_speed: float | None = (
-                                speed_kmh if speed_kmh is not None else prev_speed
-                            )
-
-                            is_over_limit_prev = bool(prev.get("is_over_limit", False))
-                            last_over_limit_time_prev = prev.get("last_over_limit_time")
-                            last_over_limit_time: float | None
-
-                            # Логика задержки красного сигнала:
-                            # 1. Если текущая скорость известна и выше порога — сразу считаем, что есть превышение.
-                            if current_speed is not None and current_speed > speed_limit_kmh:
-                                is_over_limit = True
-                                last_over_limit_time = now
-                            else:
-                                # 2. Иначе полагаемся на историю: держим красный ещё red_hold_seconds.
-                                if (
-                                    is_over_limit_prev
-                                    and isinstance(last_over_limit_time_prev, (int, float))
-                                    and now - float(last_over_limit_time_prev) <= red_hold_seconds
-                                ):
-                                    is_over_limit = True
-                                    last_over_limit_time = float(last_over_limit_time_prev)
-                                else:
-                                    is_over_limit = False
-                                    last_over_limit_time = (
-                                        float(last_over_limit_time_prev)
-                                        if isinstance(last_over_limit_time_prev, (int, float))
-                                        else None
-                                    )
-
-                            tracks[det_track_id] = {
-                                "last_pos": (cx, cy),
-                                "last_time": now,
-                                "speed_kmh": current_speed,
-                                "is_over_limit": is_over_limit,
-                                "last_over_limit_time": last_over_limit_time,
-                            }
-                        else:
-                            det_track_id = None
-                            current_speed = None
-                            is_over_limit = False
-
-                        # Получаем последнюю оценённую скорость из трека (если есть)
-                        if det_track_id is not None:
-                            track_data = tracks.get(det_track_id, {})
-                            label_speed = track_data.get("speed_kmh")
-                            is_over_limit = bool(track_data.get("is_over_limit", False))
-                        else:
-                            label_speed = None
+                    for det in processed.detections:
+                        x1, y1, x2, y2 = det.bbox
+                        score = det.score
+                        label_speed = det.speed_kmh
 
                         # Цвет по умолчанию — зелёный (объект не превышает лимит
                         # или скорость ещё не рассчитана).
@@ -440,7 +323,7 @@ def display_video_stream(camera: Optional[Camera] = None, config: Optional[dict]
                         text_color = (0, 255, 0)
 
                         # Если есть флаг превышения с учётом задержки — красим в красный.
-                        if is_over_limit:
+                        if det.is_over_limit:
                             box_color = (0, 0, 255)
                             text_color = (0, 0, 255)
 
