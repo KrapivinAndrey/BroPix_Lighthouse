@@ -13,7 +13,7 @@
     "device": "cpu",
     "draw_boxes": true
   },
-  "speed_limit_kmh": 8.0,
+  "speed_limit_kmh": 3.0,
   "red_hold_seconds": 2.0,
   "px_to_m_scale": 0.00657957469699998
 }
