@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import StatisticsPage from "./StatisticsPage";
 
 const API_BASE = "/api";
 
@@ -76,6 +77,7 @@ function useLamp() {
 }
 
 export function App() {
+  const [currentPage, setCurrentPage] = useState("main"); // "main" или "statistics"
   const { config, loading, saving, error, saveConfig } = useConfig();
   const lamp = useLamp();
   const videoRef = useRef(null);
@@ -98,6 +100,11 @@ export function App() {
       }
     };
   }, []);
+
+  // Переключение на страницу статистики (после всех хуков!)
+  if (currentPage === "statistics") {
+    return <StatisticsPage onBack={() => setCurrentPage("main")} />;
+  }
 
   const handleCameraChange = (e) => {
     const value = Number(e.target.value);
@@ -204,6 +211,13 @@ export function App() {
         <header className="page-header">
           <h1 className="logo-text">Маяк для велосипедиста</h1>
           <span className="subtitle">Панель управления</span>
+          <button
+            className="nav-button"
+            onClick={() => setCurrentPage("statistics")}
+            style={{ marginLeft: "auto" }}
+          >
+            Статистика →
+          </button>
         </header>
 
         <main className="page-main">
